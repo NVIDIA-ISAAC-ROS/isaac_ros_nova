@@ -1,0 +1,200 @@
+%YAML 1.2
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+---
+##########################################
+# This is a placeholder                  #
+# Actual common atlas is defined in      #
+# type_adapter_nitros_context_graph.yaml #
+##########################################
+name: atlas
+components:
+- name: front_3d_lidar
+  type: nvidia::isaac::PoseTreeFrame
+  parameters:
+    pose_tree: global_pose_tree/pose_tree
+---
+name: udp_receiver
+components:
+- name: tensor
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 10
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 2
+    block_size: 1080
+    num_blocks: 3000
+- type: nvidia::isaac::UdpReceiver
+  parameters:
+    tensor: tensor
+    allocator: allocator
+    async_scheduling_term: async_scheduling_term
+    address: 192.168.1.201
+    port: 2368
+    packet_accumulation: 50
+    buffer_size: 1080
+    receive_buffer_size: 24111000 # sudo sysctl -w net.core.rmem_max=26214400
+- name: async_scheduling_term
+  type: nvidia::gxf::AsynchronousSchedulingTerm
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: tensor
+    min_size: 1
+---
+name: hesai_parser
+components:
+- name: raw_data_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 50
+- name: range_scan_output
+  type: nvidia::gxf::DoubleBufferTransmitter
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 0
+    block_size: 2800000
+    num_blocks: 120
+- name: hesai_parser
+  type: nvidia::isaac::HesaiParser
+  parameters:
+    raw_data_input: raw_data_input
+    range_scan_output: range_scan_output
+    allocator: allocator
+    sensor_frame: atlas/front_3d_lidar
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: raw_data_input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: range_scan_output
+    min_size: 1
+---
+name: range_scan_slicer
+components:
+- name: partial_scan
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 5
+- name: full_scan
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    policy: 0
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 0
+    block_size: 2800000
+    num_blocks: 120
+- type: nvidia::isaac::RangeScanSlicer
+  parameters:
+    partial_scan: partial_scan
+    full_scan: full_scan
+    allocator: allocator
+    minimum_angle_degrees: 0.0
+    maximum_angle_degrees: 360.0
+    min_beam_count: 50
+    full_scan_delta_degrees: 15
+    ignore_zero_range_beams: true
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: partial_scan
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: full_scan
+    min_size: 1
+---
+name: range_scan_to_point_cloud
+components:
+- name: point_cloud
+  type: nvidia::gxf::DoubleBufferTransmitter
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: point_cloud
+    min_size: 1
+- name: range_scan
+  type: nvidia::gxf::DoubleBufferReceiver
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: range_scan
+    min_size: 1
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 2800000
+    num_blocks: 120
+- name: range_scan_to_point_cloud
+  type: nvidia::isaac_ros::point_cloud::RangeScanToPointCloud
+  parameters:
+    allocator: allocator
+    range_scan: range_scan
+    point_cloud: point_cloud
+---
+name: sink
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+    policy: 0
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: signal
+    min_size: 1
+- name: sink
+  type: nvidia::isaac_ros::MessageRelay
+  parameters:
+    source: signal
+---
+components:
+- name: edge0
+  type: nvidia::gxf::Connection
+  parameters:
+    source: udp_receiver/tensor
+    target: hesai_parser/raw_data_input
+- name: edge1
+  type: nvidia::gxf::Connection
+  parameters:
+    source: hesai_parser/range_scan_output
+    target: range_scan_slicer/partial_scan
+- name: edge2
+  type: nvidia::gxf::Connection
+  parameters:
+    source: range_scan_slicer/full_scan
+    target: range_scan_to_point_cloud/range_scan
+- name: edge3
+  type: nvidia::gxf::Connection
+  parameters:
+    source: range_scan_to_point_cloud/point_cloud
+    target: sink/signal
+---
+components:
+- name: clock
+  type: nvidia::gxf::RealtimeClock
+- type: nvidia::gxf::GreedyScheduler
+  parameters:
+    clock: clock
+    stop_on_deadlock: false
+    check_recession_period_us: 100
+- type: nvidia::gxf::JobStatistics
+  parameters:
+    clock: clock
