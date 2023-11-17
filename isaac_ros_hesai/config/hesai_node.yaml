@@ -56,6 +56,10 @@ components:
   parameters:
     transmitter: tensor
     min_size: 1
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
 ---
 name: hesai_parser
 components:
@@ -86,6 +90,10 @@ components:
   parameters:
     transmitter: range_scan_output
     min_size: 1
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
 ---
 name: range_scan_slicer
 components:
@@ -121,6 +129,10 @@ components:
   parameters:
     transmitter: full_scan
     min_size: 1
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
 ---
 name: range_scan_to_point_cloud
 components:
@@ -148,6 +160,10 @@ components:
     allocator: allocator
     range_scan: range_scan
     point_cloud: point_cloud
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
 ---
 name: sink
 components:
