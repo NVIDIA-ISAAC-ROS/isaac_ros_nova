@@ -57,11 +57,11 @@ components:
   - name: tx_accelerometer
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
-      capacity: 64
+      capacity: 10
   - name: tx_gyroscope
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
-      capacity: 64
+      capacity: 10
   - name: async_scheduling_term
     type: nvidia::gxf::AsynchronousSchedulingTerm
   - name: bmi088_driver
@@ -88,23 +88,25 @@ components:
   - name: rx_accelerometer
     type: nvidia::gxf::DoubleBufferReceiver
     parameters:
-      capacity: 1
+      capacity: 10
       policy: 0
   - name: rx_gyroscope
     type: nvidia::gxf::DoubleBufferReceiver
     parameters:
-      capacity: 1
+      capacity: 10
       policy: 0
   - name: tx_imu
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
-      capacity: 1024
+      capacity: 10
   - name: combiner
     type: nvidia::isaac::ImuMessageCombiner
     parameters:
       rx_accelerometer: rx_accelerometer
       rx_gyroscope: rx_gyroscope
       tx_imu: tx_imu
+      combine_method: interpolate
+      apply_delay_offsets: true
   - type: nvidia::gxf::MessageAvailableSchedulingTerm
     parameters:
       receiver: rx_accelerometer
@@ -165,11 +167,12 @@ components:
   - name: rx_tsc_message
     type: nvidia::gxf::DoubleBufferReceiver
     parameters:
-      capacity: 5
+      capacity: 10
   - name: tx_sys_message
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
-      capacity: 5
+      capacity: 10
+      policy: 0
   - name: accel_translator
     type: nvidia::isaac::TimestampTranslator
     parameters:
@@ -181,10 +184,6 @@ components:
     parameters:
       receiver: rx_tsc_message
       min_size: 1
-  - type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
-    parameters:
-      transmitter: tx_sys_message
-      min_size: 1
 ---
 name: gyro_translator
 components:
@@ -193,11 +192,12 @@ components:
   - name: rx_tsc_message
     type: nvidia::gxf::DoubleBufferReceiver
     parameters:
-      capacity: 5
+      capacity: 10
   - name: tx_sys_message
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
-      capacity: 5
+      capacity: 10
+      policy: 0
   - name: gyro_translator
     type: nvidia::isaac::TimestampTranslator
     parameters:
@@ -208,10 +208,6 @@ components:
   - type: nvidia::gxf::MessageAvailableSchedulingTerm
     parameters:
       receiver: rx_tsc_message
-      min_size: 1
-  - type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
-    parameters:
-      transmitter: tx_sys_message
       min_size: 1
 ---
 components:
@@ -247,11 +243,10 @@ components:
 components:
 - name: clock
   type: nvidia::gxf::RealtimeClock
-- type: nvidia::gxf::MultiThreadScheduler
+- type: nvidia::gxf::EventBasedScheduler
   parameters:
     clock: clock
     stop_on_deadlock: false
-    check_recession_period_ms: 1
     worker_thread_number: 2
 - type: nvidia::gxf::JobStatistics
   parameters:

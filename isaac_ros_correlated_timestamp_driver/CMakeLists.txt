@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -46,6 +46,11 @@ rclcpp_components_register_nodes(correlated_timestamp_driver_node
   "nvidia::isaac_ros::correlated_timestamp_driver::CorrelatedTimestampDriverNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::correlated_timestamp_driver::CorrelatedTimestampDriverNode;
   $<TARGET_FILE:correlated_timestamp_driver_node>\n")
+set_target_properties(correlated_timestamp_driver_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  BUILD_RPATH_USE_ORIGIN TRUE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "isaac_ros_owl/owl_node.hpp"
+#include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_nitros_correlated_timestamp_type/nitros_correlated_timestamp.hpp"
 
 namespace nvidia
@@ -31,9 +32,9 @@ constexpr char OUTPUT_COMPONENT_KEY_CAM_LEFT[] = "sink_left_image/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_LEFT[] = "nitros_image_rgb8";
 constexpr char OUTPUT_TOPIC_NAME_CAM_LEFT[] = "left/image_raw";
 
-constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT[] = "sink_left_camerainfo/sink";
+constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT[] = "sink_left_camera_info/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_INFO_LEFT[] = "nitros_camera_info";
-constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_LEFT[] = "left/camerainfo";
+constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_LEFT[] = "left/camera_info";
 
 constexpr char APP_YAML_FILENAME[] = "config/owl_node.yaml";
 constexpr char PACKAGE_NAME[] = "isaac_ros_owl";
@@ -49,16 +50,16 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"isaac_ros_gxf", "gxf/lib/std/libgxf_std.so"},
   {"isaac_ros_gxf", "gxf/lib/cuda/libgxf_cuda.so"},
   {"isaac_ros_gxf", "gxf/lib/serialization/libgxf_serialization.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_gxf_helpers.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_sight.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_atlas.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_isaac_messages.so"},
+  {"gxf_isaac_gxf_helpers", "gxf/lib/libgxf_isaac_gxf_helpers.so"},
+  {"gxf_isaac_sight", "gxf/lib/libgxf_isaac_sight.so"},
+  {"gxf_isaac_atlas", "gxf/lib/libgxf_isaac_atlas.so"},
+  {"gxf_isaac_messages", "gxf/lib/libgxf_isaac_messages.so"},
   {"isaac_ros_gxf", "gxf/lib/multimedia/libgxf_multimedia.so"},
-  {"isaac_ros_image_proc", "gxf/lib/image_proc/libgxf_tensorops.so"},
-  {"isaac_ros_image_proc", "gxf/lib/image_proc/libgxf_rectify_params_generator.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_timestamp_correlator.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_argus.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_message_compositor.so"}
+  {"gxf_isaac_tensorops", "gxf/lib/libgxf_isaac_tensorops.so"},
+  {"gxf_isaac_rectify", "gxf/lib/libgxf_isaac_rectify.so"},
+  {"gxf_isaac_timestamp_correlator", "gxf/lib/libgxf_isaac_timestamp_correlator.so"},
+  {"gxf_isaac_argus", "gxf/lib/libgxf_isaac_argus.so"},
+  {"gxf_isaac_message_compositor", "gxf/lib/libgxf_isaac_message_compositor.so"}
 };
 const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
   "isaac_ros_owl",
@@ -112,10 +113,15 @@ OwlNode::OwlNode(const rclcpp::NodeOptions & options)
   module_id_ = declare_parameter<int>("module_id", 0);
   mode_ = declare_parameter<int>("mode", 0);
   fsync_type_ = declare_parameter<int>("fsync_type", 1);
-  camera_type_ = declare_parameter<int>("camera_type", 0);
   camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "camera");
   optical_frame_name_ = declare_parameter<std::string>("optical_frame_name", "left_cam");
   camera_info_url_ = declare_parameter<std::string>("camera_info_url", "");
+
+  // This function sets the QoS parameter for publishers and subscribers in this NITROS node
+  rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
+  for (auto & config : config_map_) {
+    config.second.qos = output_qos_;
+  }
 
   // Load camera info from a file if provided
   if (!camera_info_url_.empty()) {
@@ -130,7 +136,7 @@ OwlNode::OwlNode(const rclcpp::NodeOptions & options)
     &ArgusCameraNode::ArgusImageCallback, this,
     std::placeholders::_1, std::placeholders::_2, optical_frame_name_);
 
-  // Adding callback for left camerainfo
+  // Adding callback for left camera_info
   config_map_[OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT].callback =
     std::bind(
     &ArgusCameraNode::ArgusCameraInfoCallback, this,

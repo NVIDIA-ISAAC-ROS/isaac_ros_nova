@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -59,14 +59,11 @@ target_compile_definitions(imu_bmi088_node
 )
 rclcpp_components_register_nodes(imu_bmi088_node "nvidia::isaac_ros::imu_bmi088::Bmi088Node")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::imu_bmi088::Bmi088Node;$<TARGET_FILE:imu_bmi088_node>\n")
-
-# bmi088_imu gxf extension
-add_subdirectory(gxf/bmi088_imu)
-install(TARGETS gxf_bmi088_imu DESTINATION share/${PROJECT_NAME}/gxf/lib/bmi088_imu)
-
-# imu_utils gxf extension
-add_subdirectory(gxf/imu_utils)
-install(TARGETS gxf_imu_utils DESTINATION share/${PROJECT_NAME}/gxf/lib/imu_utils)
+set_target_properties(imu_bmi088_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  BUILD_RPATH_USE_ORIGIN TRUE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

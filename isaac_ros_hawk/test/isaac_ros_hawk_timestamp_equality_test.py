@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ def generate_test_description():
             plugin='nvidia::isaac_ros::correlated_timestamp_driver::CorrelatedTimestampDriverNode',
             namespace=IsaacHawkNodeTest.generate_namespace(),
             parameters=[{'use_time_since_epoch': False,
-                        'nvpps_dev_name': '/dev/nvpps0'}])
+                        'nvpps_dev_file': '/dev/nvpps0'}])
 
         hawk_node = ComposableNode(
             name='hawk_node',
@@ -96,7 +96,7 @@ class IsaacHawkNodeTest(IsaacROSBaseTest):
 
             self.create_exact_time_sync_logging_subscribers(
                 [('left/image_raw', Image), ('right/image_raw', Image),
-                 ('left/camerainfo', CameraInfo), ('right/camerainfo', CameraInfo)],
+                 ('left/camera_info', CameraInfo), ('right/camera_info', CameraInfo)],
                 received_messages,
                 accept_multiple_messages=True)
             end_time = time.time() + TIMEOUT

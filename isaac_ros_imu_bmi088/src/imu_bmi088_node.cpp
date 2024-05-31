@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "isaac_ros_imu_bmi088/imu_bmi088_node.hpp"
+#include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_nitros_imu_type/nitros_imu.hpp"
 #include "isaac_ros_nitros_correlated_timestamp_type/nitros_correlated_timestamp.hpp"
 
@@ -48,9 +49,12 @@ constexpr char PACKAGE_NAME[] = "isaac_ros_imu_bmi088";
 
 const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"isaac_ros_gxf", "gxf/lib/serialization/libgxf_serialization.so"},
-  {"isaac_ros_imu_bmi088", "gxf/lib/bmi088_imu/libgxf_bmi088_imu.so"},  // bmi088_driver
-  {"isaac_ros_imu_bmi088", "gxf/lib/imu_utils/libgxf_imu_utils.so"},  // imu_combiner
-  {"isaac_ros_gxf", "gxf/lib/libgxf_timestamp_correlator.so"}  // timestamp_translator
+  // bmi088_driver
+  {"gxf_isaac_bmi088_imu", "gxf/lib/libgxf_isaac_bmi088_imu.so"},
+  // imu_combiner
+  {"gxf_isaac_imu_utils", "gxf/lib/libgxf_isaac_imu_utils.so"},
+  // timestamp_translator
+  {"gxf_isaac_timestamp_correlator", "gxf/lib/libgxf_isaac_timestamp_correlator.so"}
 };
 const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
   "isaac_ros_imu_bmi088",
@@ -94,6 +98,17 @@ Bmi088Node::Bmi088Node(const rclcpp::NodeOptions & options)
   bmi_id_(declare_parameter<int>("bmi_id", 69))
 {
   RCLCPP_DEBUG(get_logger(), "[Bmi088Node] Constructor");
+
+  // This function sets the QoS parameter for publishers and subscribers in this NITROS node
+  rclcpp::QoS input_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos");
+  rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
+  for (auto & config : config_map_) {
+    if (config.second.topic_name == INPUT_TOPIC_NAME_CORRELATED_TIMESTAMP) {
+      config.second.qos = input_qos_;
+    } else {
+      config.second.qos = output_qos_;
+    }
+  }
 
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosImu>();
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosCorrelatedTimestamp>();

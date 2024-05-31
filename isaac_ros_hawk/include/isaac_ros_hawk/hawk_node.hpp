@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -53,8 +53,7 @@ private:
   sensor_msgs::msg::CameraInfo::SharedPtr left_camera_info_;
   sensor_msgs::msg::CameraInfo::SharedPtr right_camera_info_;
 
-  int imu_frequency_;  // Imu Update Frequency (Hz). Supported values are 100 and 200
-  int bmi_id_;  // Id for BMI088 IMU
+  bool wide_fov_;
 };
 
 }  // namespace hawk
