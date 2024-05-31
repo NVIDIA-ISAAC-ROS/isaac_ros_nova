@@ -1,0 +1,77 @@
+<?xml version="1.0"?>
+<!--
+Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+
+NVIDIA CORPORATION and its licensors retain all intellectual property
+and proprietary rights in and to this software, related documentation
+and any modifications thereto. Any use, reproduction, disclosure or
+distribution of this software and related documentation without an express
+license agreement from NVIDIA CORPORATION is strictly prohibited.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+  Definition of the rplidar_s2e_lidar macro
+
+  Parameters:
+    - origin: Origin of the transformation connecting the root of this macro with parent link.
+    - name: The 2D Lidar name. e.g., if it is "front", the link is "front_2d_lidar".
+            Default value: "rplidar_s2e", which leads to "rplidar_s2e_2d_lidar" link name.
+    - parent: Parent link where the root of this macro will be connected with a joint.
+              Default value: base_link
+  -->
+  <xacro:macro name="rplidar_s2e_lidar" params="*origin name=rplidar_s2e parent=base_link
+    mount_is_root:=false">
+
+    <!-- Constants -->
+    <xacro:property name="M_PI" value="3.1415926535897931"/>
+    <xacro:property name="mount_offset_x" value="-0.02085"/>
+    <xacro:property name="mount_offset_y" value="0.02085"/>
+    <xacro:property name="mount_offset_z" value="-0.02085"/>
+
+    <!-- Main 2D Lidar link: Origin is the rotating center of the range scanner core -->
+    <link name="${name}_2d_lidar">
+      <visual>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+          <mesh filename="package://rplidar_s2e_description/meshes/rplidar_s2e.obj"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+          <mesh filename="package://rplidar_s2e_description/meshes/rplidar_s2e.obj"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- 2D Lidar mounting point: Bottom-Center of the Forward-Right threaded small screw hole in bottom -->
+    <link name="${name}_2d_lidar_mount"/>
+
+    <!-- Joints connecting 2D Lidar main link to mount, and to the parent provided as argument  -->
+    <xacro:if value="${mount_is_root}">
+      <xacro:property name="root_link" value="${name}_2d_lidar_mount"/>
+      <joint name="${name}_2d_lidar_mount_joint" type="fixed">
+        <origin xyz="${mount_offset_x} ${mount_offset_y} ${-mount_offset_z}" rpy="0.0 0.0 ${-M_PI}"/>
+        <parent link="${name}_2d_lidar_mount"/>
+        <child link="${name}_2d_lidar"/>
+      </joint>
+    </xacro:if>
+
+    <xacro:unless value="${mount_is_root}">
+      <xacro:property name="root_link" value="${name}_2d_lidar"/>
+      <joint name="${name}_2d_lidar_mount_joint" type="fixed">
+        <origin xyz="${mount_offset_x} ${mount_offset_y} ${mount_offset_z}" rpy="0.0 0.0 ${M_PI}"/>
+        <parent link="${name}_2d_lidar"/>
+        <child link="${name}_2d_lidar_mount"/>
+      </joint>
+    </xacro:unless>
+
+    <joint name="${name}_2d_lidar_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="${root_link}"/>
+    </joint>
+
+  </xacro:macro>
+</robot>

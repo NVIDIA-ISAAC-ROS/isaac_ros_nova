@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_hawk/hawk_node.hpp"
-#include "isaac_ros_nitros_imu_type/nitros_imu.hpp"
 #include "isaac_ros_nitros_correlated_timestamp_type/nitros_correlated_timestamp.hpp"
 
 namespace nvidia
@@ -32,17 +32,17 @@ constexpr char OUTPUT_COMPONENT_KEY_CAM_LEFT[] = "sink_left_image/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_LEFT[] = "nitros_image_rgb8";
 constexpr char OUTPUT_TOPIC_NAME_CAM_LEFT[] = "left/image_raw";
 
-constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT[] = "sink_left_camerainfo/sink";
+constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT[] = "sink_left_camera_info/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_INFO_LEFT[] = "nitros_camera_info";
-constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_LEFT[] = "left/camerainfo";
+constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_LEFT[] = "left/camera_info";
 
 constexpr char OUTPUT_COMPONENT_KEY_CAM_RIGHT[] = "sink_right_image/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_RIGHT[] = "nitros_image_rgb8";
 constexpr char OUTPUT_TOPIC_NAME_CAM_RIGHT[] = "right/image_raw";
 
-constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_RIGHT[] = "sink_right_camerainfo/sink";
+constexpr char OUTPUT_COMPONENT_KEY_CAM_INFO_RIGHT[] = "sink_right_camera_info/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_INFO_RIGHT[] = "nitros_camera_info";
-constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_RIGHT[] = "right/camerainfo";
+constexpr char OUTPUT_TOPIC_NAME_CAM_INFO_RIGHT[] = "right/camera_info";
 
 constexpr char APP_YAML_FILENAME[] = "config/hawk_node.yaml";
 constexpr char PACKAGE_NAME[] = "isaac_ros_hawk";
@@ -58,17 +58,17 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"isaac_ros_gxf", "gxf/lib/std/libgxf_std.so"},
   {"isaac_ros_gxf", "gxf/lib/cuda/libgxf_cuda.so"},
   {"isaac_ros_gxf", "gxf/lib/serialization/libgxf_serialization.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_gxf_helpers.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_sight.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_atlas.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_isaac_messages.so"},
+  {"gxf_isaac_gxf_helpers", "gxf/lib/libgxf_isaac_gxf_helpers.so"},
+  {"gxf_isaac_sight", "gxf/lib/libgxf_isaac_sight.so"},
+  {"gxf_isaac_atlas", "gxf/lib/libgxf_isaac_atlas.so"},
+  {"gxf_isaac_messages", "gxf/lib/libgxf_isaac_messages.so"},
   {"isaac_ros_gxf", "gxf/lib/multimedia/libgxf_multimedia.so"},
-  {"isaac_ros_image_proc", "gxf/lib/image_proc/libgxf_tensorops.so"},
-  {"isaac_ros_image_proc", "gxf/lib/image_proc/libgxf_rectify_params_generator.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_timestamp_correlator.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_argus.so"},
-  {"isaac_ros_gxf", "gxf/lib/libgxf_message_compositor.so"},
-  {"isaac_ros_argus_camera", "gxf/lib/utils/libgxf_utils.so"}
+  {"gxf_isaac_tensorops", "gxf/lib/libgxf_isaac_tensorops.so"},
+  {"gxf_isaac_rectify", "gxf/lib/libgxf_isaac_rectify.so"},
+  {"gxf_isaac_timestamp_correlator", "gxf/lib/libgxf_isaac_timestamp_correlator.so"},
+  {"gxf_isaac_argus", "gxf/lib/libgxf_isaac_argus.so"},
+  {"gxf_isaac_message_compositor", "gxf/lib/libgxf_isaac_message_compositor.so"},
+  {"gxf_isaac_camera_utils", "gxf/lib/libgxf_isaac_camera_utils.so"}
 };
 const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
   "isaac_ros_hawk",
@@ -135,9 +135,8 @@ HawkNode::HawkNode(const rclcpp::NodeOptions & options)
     PACKAGE_NAME)
 {
   camera_id_ = declare_parameter<int>("camera_id", 0);
-  module_id_ = declare_parameter<int>("module_id", 2);
+  module_id_ = declare_parameter<int>("module_id", 0);
   mode_ = declare_parameter<int>("mode", 0);
-  camera_type_ = declare_parameter<int>("camera_type", 1);
   fsync_type_ = declare_parameter<int>("fsync_type", 1);
   camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "camera");
   left_optical_frame_name_ = declare_parameter<std::string>("left_optical_frame_name", "left_cam");
@@ -147,8 +146,17 @@ HawkNode::HawkNode(const rclcpp::NodeOptions & options)
     declare_parameter<std::string>("left_camera_info_url", "");
   right_camera_info_url_ =
     declare_parameter<std::string>("right_camera_info_url", "");
-  imu_frequency_ = declare_parameter<int>("imu_frequency", 200);
-  bmi_id_ = declare_parameter<int>("bmi_id", 69);
+  wide_fov_ = declare_parameter<int>("wide_fov", false);
+  // This function sets the QoS parameter for publishers and subscribers in this NITROS node
+  rclcpp::QoS input_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos");
+  rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
+  for (auto & config : config_map_) {
+    if (config.second.topic_name == INPUT_TOPIC_NAME_CORRELATED_TIMESTAMP) {
+      config.second.qos = input_qos_;
+    } else {
+      config.second.qos = output_qos_;
+    }
+  }
 
   // Load camera info from files if provided
   if (!left_camera_info_url_.empty()) {
@@ -176,20 +184,19 @@ HawkNode::HawkNode(const rclcpp::NodeOptions & options)
     &ArgusCameraNode::ArgusImageCallback, this,
     std::placeholders::_1, std::placeholders::_2, right_optical_frame_name_);
 
-  // Adding callback for left camerainfo
+  // Adding callback for left camera_info
   config_map_[OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT].callback =
     std::bind(
     &ArgusCameraNode::ArgusCameraInfoCallback, this,
     std::placeholders::_1, std::placeholders::_2, camera_link_frame_name_,
     left_optical_frame_name_, left_camera_info_);
 
-  // Adding callback for right camerainfo
+  // Adding callback for right camera_info
   config_map_[OUTPUT_COMPONENT_KEY_CAM_INFO_RIGHT].callback =
     std::bind(
     &ArgusCameraNode::ArgusCameraInfoCallback, this,
     std::placeholders::_1, std::placeholders::_2, camera_link_frame_name_,
     right_optical_frame_name_, right_camera_info_);
-  registerSupportedType<nvidia::isaac_ros::nitros::NitrosImu>();
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosCorrelatedTimestamp>();
   startNitrosNode();
 }
@@ -206,6 +213,15 @@ void HawkNode::postLoadGraphCallback()
 {
   nvidia::isaac_ros::argus::ArgusCameraNode::postLoadGraphCallback();
   RCLCPP_INFO(get_logger(), "[HawkNode] postLoadGraphCallback().");
+
+  if (wide_fov_) {
+    // set alpha used for hawk wide_fov
+    getNitrosContext().setParameterFloat64(
+      "rectify_parameters", "nvidia::isaac::RectifyParamsGenerator", "alpha", 0.7);
+    RCLCPP_INFO(
+      get_logger(), "[ArgusStereoNode] set alpha in rectify parameter generator to  \"%f\"",
+      0.7);
+  }
 }
 
 }  // namespace hawk

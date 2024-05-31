@@ -1,0 +1,120 @@
+<?xml version="1.0"?>
+<!--
+Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+
+NVIDIA CORPORATION and its licensors retain all intellectual property
+and proprietary rights in and to this software, related documentation
+and any modifications thereto. Any use, reproduction, disclosure or
+distribution of this software and related documentation without an express
+license agreement from NVIDIA CORPORATION is strictly prohibited.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+  Definition of the hawk_camera macro
+
+  Parameters:
+    - origin: Origin of the transformation connecting the root of this macro with parent link.
+    - name: The camera name. e.g., if it is "front_stereo", the link is "front_stereo_camera".
+            Default value: "hawk_stereo", which leads to "hawk_stereo_camera" link name.
+    - parent: Parent link where the root of this macro will be connected with a joint.
+              Default value: base_link
+    - mount_is_root: Flag identifying the root link. If true, root is _mount, othewise is _camera.
+  -->
+  <xacro:macro name="hawk_camera" params="*origin name=hawk_stereo parent=base_link
+    mount_is_root:=false">
+
+    <!-- Constants -->
+    <xacro:property name="M_PI" value="3.1415926535897931"/>
+    <xacro:property name="baseline" value="0.15"/>
+    <xacro:property name="mount_offset_x" value="-0.001"/>
+    <xacro:property name="mount_offset_y" value="-0.075"/>
+    <xacro:property name="mount_offset_z" value="-0.0125"/>
+    <xacro:property name="imu_offset_x" value="0.0"/>
+    <xacro:property name="imu_offset_y" value="-0.0947"/>
+    <xacro:property name="imu_offset_z" value="0.0061"/>
+
+    <!-- Main camera link: Origin is at the principal point of the left camera -->
+    <link name="${name}_camera">
+      <visual>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+          <mesh filename="package://hawk_description/meshes/hawk.obj"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+          <mesh filename="package://hawk_description/meshes/hawk.obj"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Camera mounting point: Bottom-Center of the threaded screw hole in the bottom -->
+    <link name="${name}_camera_mount"/>
+
+    <!-- Joints connecting camera main link to mount, and to the parent provided as argument  -->
+    <xacro:if value="${mount_is_root}">
+      <xacro:property name="root_link" value="${name}_camera_mount"/>
+      <joint name="${name}_camera_mount_joint" type="fixed">
+        <origin xyz="${-mount_offset_x} ${-mount_offset_y} ${-mount_offset_z}" rpy="0.0 0.0 0.0"/>
+        <parent link="${name}_camera_mount"/>
+        <child link="${name}_camera"/>
+      </joint>
+    </xacro:if>
+
+    <xacro:unless value="${mount_is_root}">
+      <xacro:property name="root_link" value="${name}_camera"/>
+      <joint name="${name}_camera_mount_joint" type="fixed">
+        <origin xyz="${mount_offset_x} ${mount_offset_y} ${mount_offset_z}" rpy="0.0 0.0 0.0"/>
+        <parent link="${name}_camera"/>
+        <child link="${name}_camera_mount"/>
+      </joint>
+    </xacro:unless>
+
+    <joint name="${name}_camera_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="${root_link}"/>
+    </joint>
+
+    <!-- Left camera -->
+    <link name="${name}_camera_left"/>
+    <joint name="${name}_camera_left_joint" type="fixed">
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <parent link="${name}_camera"/>
+      <child link="${name}_camera_left"/>
+    </joint>
+
+    <link name="${name}_camera_left_optical"/>
+    <joint name="${name}_camera_left_optical_joint" type="fixed">
+      <origin xyz="0.0 0.0 0.0" rpy="${-M_PI/2} 0.0 ${-M_PI/2}"/>
+      <parent link="${name}_camera_left"/>
+      <child link="${name}_camera_left_optical"/>
+    </joint>
+
+    <!-- Right camera -->
+    <link name="${name}_camera_right"/>
+    <joint name="${name}_camera_right_joint" type="fixed">
+      <origin xyz="0.0 ${-baseline} 0.0" rpy="0.0 0.0 0.0"/>
+      <parent link="${name}_camera"/>
+      <child link="${name}_camera_right"/>
+    </joint>
+
+    <link name="${name}_camera_right_optical"/>
+    <joint name="${name}_camera_right_optical_joint" type="fixed">
+      <origin xyz="0.0 0.0 0.0" rpy="${-M_PI/2} 0.0 ${-M_PI/2}"/>
+      <parent link="${name}_camera_right"/>
+      <child link="${name}_camera_right_optical"/>
+    </joint>
+
+    <!-- IMU -->
+    <link name="${name}_camera_imu"/>
+    <joint name="${name}_camera_imu_joint" type="fixed">
+      <origin xyz="${imu_offset_x} ${imu_offset_y} ${imu_offset_z}" rpy="0.0 ${M_PI/2} 0.0"/>
+      <parent link="${name}_camera"/>
+      <child link="${name}_camera_imu"/>
+    </joint>
+
+  </xacro:macro>
+</robot>

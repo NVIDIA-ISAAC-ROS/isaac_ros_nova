@@ -22,7 +22,6 @@ components:
     type: nvidia::gxf::DoubleBufferTransmitter
     parameters:
       capacity: 1
-      policy: 0
   - name: async_scheduling_term
     type: nvidia::gxf::AsynchronousSchedulingTerm
   - type: nvidia::isaac::CorrelatedTimestampDriver
@@ -30,7 +29,7 @@ components:
       tx_correlated_timestamps: tx_correlated_timestamps
       async_scheduling_term: async_scheduling_term
       use_time_since_epoch: false
-      nvpps_dev_name: /dev/nvpps0
+      nvpps_dev_file: /dev/nvpps0
   - type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
     parameters:
       transmitter: tx_correlated_timestamps
@@ -42,7 +41,6 @@ components:
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 1
-    policy: 0
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: signal
@@ -62,11 +60,11 @@ components:
 components:
 - name: clock
   type: nvidia::gxf::RealtimeClock
-- type: nvidia::gxf::GreedyScheduler
+- type: nvidia::gxf::EventBasedScheduler
   parameters:
     clock: clock
     stop_on_deadlock: false
-    check_recession_period_us: 100
+    worker_thread_number: 2
 - type: nvidia::gxf::JobStatistics
   parameters:
     clock: clock

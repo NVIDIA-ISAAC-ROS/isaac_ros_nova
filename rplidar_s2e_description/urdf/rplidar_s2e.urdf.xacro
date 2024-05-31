@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!--
+Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+
+NVIDIA CORPORATION and its licensors retain all intellectual property
+and proprietary rights in and to this software, related documentation
+and any modifications thereto. Any use, reproduction, disclosure or
+distribution of this software and related documentation without an express
+license agreement from NVIDIA CORPORATION is strictly prohibited.
+-->
+<robot name="please_specify_robot_name" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="robot_namespace" default="/"/> 
+  <xacro:include filename="$(find rplidar_s2e_description)/urdf/rplidar_s2e_macro.urdf.xacro"/>
+
+  <link name="base_link"/>
+  <xacro:rplidar_s2e_lidar name="rplidar_s2e" parent="base_link" mount_is_root="true">
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </xacro:rplidar_s2e_lidar>
+</robot>

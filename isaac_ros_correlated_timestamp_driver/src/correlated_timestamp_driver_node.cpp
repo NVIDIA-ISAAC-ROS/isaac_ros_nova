@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_correlated_timestamp_driver/correlated_timestamp_driver_node.hpp"
 #include "isaac_ros_nitros_correlated_timestamp_type/nitros_correlated_timestamp.hpp"
 
@@ -39,7 +40,8 @@ constexpr char APP_YAML_FILENAME[] = "config/correlated_timestamp_driver_node.ya
 constexpr char PACKAGE_NAME[] = "isaac_ros_correlated_timestamp_driver";
 
 const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
-  {"isaac_ros_gxf", "gxf/lib/libgxf_timestamp_correlator.so"}  // timestamp correlator
+  // timestamp correlator
+  {"gxf_isaac_timestamp_correlator", "gxf/lib/libgxf_isaac_timestamp_correlator.so"}
 };
 const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
   "isaac_ros_correlated_timestamp_driver",
@@ -70,9 +72,15 @@ CorrelatedTimestampDriverNode::CorrelatedTimestampDriverNode(const rclcpp::NodeO
     EXTENSIONS,
     PACKAGE_NAME),
   use_time_since_epoch_(declare_parameter<bool>("use_time_since_epoch", false)),
-  nvpps_dev_name_(declare_parameter<std::string>("nvpps_dev_name", "/dev/nvpps0"))
+  nvpps_dev_file_(declare_parameter<std::string>("nvpps_dev_file", "/dev/nvpps0"))
 {
   RCLCPP_DEBUG(get_logger(), "[CorrelatedTimestampDriverNode] Constructor");
+
+  // This function sets the QoS parameter for publishers and subscribers in this NITROS node
+  rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
+  for (auto & config : config_map_) {
+    config.second.qos = output_qos_;
+  }
 
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosCorrelatedTimestamp>();
 
@@ -85,7 +93,7 @@ void CorrelatedTimestampDriverNode::postLoadGraphCallback()
     "correlator", "nvidia::isaac::CorrelatedTimestampDriver", "use_time_since_epoch",
     use_time_since_epoch_);
   getNitrosContext().setParameterStr(
-    "correlator", "nvidia::isaac::CorrelatedTimestampDriver", "nvpps_dev_name", nvpps_dev_name_);
+    "correlator", "nvidia::isaac::CorrelatedTimestampDriver", "nvpps_dev_file", nvpps_dev_file_);
 }
 
 

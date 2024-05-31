@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <!--
- SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  SPDX-License-Identifier: Apache-2.0
 
  Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,10 +20,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_hawk</name>
-  <version>2.1.0</version>
+  <version>3.0.0</version>
   <description>Support for Hawk Stereo Camera</description>
 
-  <maintainer email="ashwinvk@nvidia.com">Ashwin Varghese Kuruttukulam</maintainer>
+  <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
   <author>Ashwin Varghese Kuruttukulam</author>
@@ -34,15 +34,25 @@
   <depend>isaac_ros_image_proc</depend>
   <depend>isaac_ros_nitros_camera_info_type</depend>
   <depend>isaac_ros_nitros_image_type</depend>
-  <depend>isaac_ros_nitros_imu_type</depend>
   <depend>isaac_ros_nitros_correlated_timestamp_type</depend>
   <depend>isaac_ros_correlated_timestamp_driver</depend>
   <depend>isaac_ros_argus_camera</depend>
+  <depend>gxf_isaac_camera_utils</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>tf2_ros</depend>
 
   <build_depend>isaac_ros_common</build_depend>
+
+  <exec_depend>gxf_isaac_argus</exec_depend>
+  <exec_depend>gxf_isaac_atlas</exec_depend>
+  <exec_depend>gxf_isaac_gxf_helpers</exec_depend>
+  <exec_depend>gxf_isaac_messages</exec_depend>
+  <exec_depend>gxf_isaac_message_compositor</exec_depend>
+  <exec_depend>gxf_isaac_rectify</exec_depend>
+  <exec_depend>gxf_isaac_sight</exec_depend>
+  <exec_depend>gxf_isaac_tensorops</exec_depend>
+  <exec_depend>gxf_isaac_timestamp_correlator</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
