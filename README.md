@@ -82,4 +82,4 @@ Please visit the [Isaac ROS Documentation](https://nvidia-isaac-ros.github.io/re
 
 ## Latest
 
-Update 2024-05-30: Introduced Data Recorder and other utilities
+Update 2024-09-26: Update for Isaac ROS 3.1
