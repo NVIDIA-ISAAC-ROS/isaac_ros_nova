@@ -18,19 +18,17 @@
 import os
 import sys
 from tempfile import NamedTemporaryFile
+from typing import List
 
 from ament_index_python.packages import get_package_share_directory
-from launch import LaunchContext, LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.actions import OpaqueFunction, Shutdown, TimerAction
-from launch.substitutions import LaunchConfiguration
+import isaac_ros_launch_utils as lu
+from launch import Action, LaunchDescription
+from launch.actions import ExecuteProcess, Shutdown, TimerAction
 from launch_ros.actions import Node
 import yaml
 
 
-def load_config(context: LaunchContext,
-                namespace: LaunchConfiguration,
-                replay: LaunchConfiguration):
+def load_config(args: lu.ArgumentContainer) -> List[Action]:
     config_path = os.path.join(
         get_package_share_directory('hesai_ros_driver'), 'config', 'config.yaml')
     correction_path = os.path.join(
@@ -43,10 +41,12 @@ def load_config(context: LaunchContext,
         config = yaml.safe_load(file)
         config['lidar'][0]['driver']['correction_file_path'] = correction_path
         config['lidar'][0]['driver']['firetimes_path'] = firetimes_path
-        if context.perform_substitution(replay) == 'True':
+        if lu.is_true(args.replay):
             config['lidar'][0]['driver']['source_type'] = 3
         else:
             config['lidar'][0]['driver']['source_type'] = 1
+        config['lidar'][0]['driver']['device_ip_address'] = args.ip
+        config['lidar'][0]['ros']['ros_frame_id'] = args.namespace
 
     if config is None:
         print('Error loading config from ' + config_path)
@@ -56,46 +56,36 @@ def load_config(context: LaunchContext,
     with open(tmp.name, 'w') as file:
         yaml.dump(config, file)
 
-    hesai_lidar_node = Node(
+    actions = []
+    actions.append(
+        lu.log_info(["Enabling hesai lidar at IP '", args.ip, "'"]))
+    actions.append(
+        lu.log_info(['lidar source type {}'.format(config['lidar'][0]['driver']['source_type'])]))
+
+    actions.append(Node(
         name='hesai_lidar',
         package='hesai_ros_driver',
         executable='hesai_ros_driver_node',
         arguments=['-c', tmp.name],
-        namespace=namespace,
+        namespace=args.namespace,
         remappings=[
             ('/lidar_packets', 'lidar_packets'),
             ('/lidar_points', 'lidar_points'),
         ],
         output='screen',
         on_exit=Shutdown(),
-    )
-
-    return [LaunchDescription([
-        hesai_lidar_node,
-        TimerAction(actions=[ExecuteProcess(cmd=['rm', '-f', 'log.log'])], period=1.0),
-    ])]
+    ))
+    actions.append(TimerAction(actions=[ExecuteProcess(cmd=['rm', '-f', 'log.log'])], period=1.0))
+    return actions
 
 
 def generate_launch_description():
-    namespace = LaunchConfiguration('namespace')
-    namespace_launch_arg = DeclareLaunchArgument(
-        'namespace',
-        description='Namespace',
-        default_value='hesai_lidar',
-    )
+    args = lu.ArgumentContainer()
+    args.add_arg('namespace', 'hesai_lidar', 'ROS namespace', cli=True)
+    args.add_arg('replay', 'False', 'Enable replay from rosbag', cli=True)
+    args.add_arg('ip', '192.168.1.201', 'Hesai source IP address', cli=True)
 
-    replay = LaunchConfiguration('replay')
-    replay_launch_arg = DeclareLaunchArgument(
-        'replay',
-        description='Enable replay from rosbag',
-        default_value='False',
-    )
+    args.add_opaque_function(load_config)
+    actions = args.get_launch_actions()
 
-    launch_args = [
-        namespace_launch_arg,
-        replay_launch_arg,
-    ]
-
-    return LaunchDescription(launch_args + [
-        OpaqueFunction(function=load_config, args=[namespace, replay]),
-    ])
+    return LaunchDescription(actions)

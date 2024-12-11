@@ -70,10 +70,10 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"gxf_isaac_message_compositor", "gxf/lib/libgxf_isaac_message_compositor.so"},
   {"gxf_isaac_camera_utils", "gxf/lib/libgxf_isaac_camera_utils.so"}
 };
-const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
-  "isaac_ros_hawk",
+const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {};
+const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {
+  "config/isaac_ros_hawk_spec.yaml",
 };
-const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {};
 const std::vector<std::string> GENERATOR_RULE_FILENAMES = {
   "config/namespace_injector_rule_hawk.yaml"
 };
@@ -83,7 +83,7 @@ const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
   {OUTPUT_COMPONENT_KEY_CAM_LEFT,
     {
       .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
+      .qos = rclcpp::QoS(1),
       .compatible_data_format = OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_LEFT,
       .topic_name = OUTPUT_TOPIC_NAME_CAM_LEFT,
     }
@@ -91,7 +91,7 @@ const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
   {OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT,
     {
       .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
+      .qos = rclcpp::QoS(1),
       .compatible_data_format = OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_INFO_LEFT,
       .topic_name = OUTPUT_TOPIC_NAME_CAM_INFO_LEFT,
     }
@@ -99,7 +99,7 @@ const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
   {OUTPUT_COMPONENT_KEY_CAM_RIGHT,
     {
       .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
+      .qos = rclcpp::QoS(1),
       .compatible_data_format = OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_RIGHT,
       .topic_name = OUTPUT_TOPIC_NAME_CAM_RIGHT,
     }
@@ -107,7 +107,7 @@ const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
   {OUTPUT_COMPONENT_KEY_CAM_INFO_RIGHT,
     {
       .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
+      .qos = rclcpp::QoS(1),
       .compatible_data_format = OUTPUT_DEFAULT_TENSOR_FORMAT_CAM_INFO_RIGHT,
       .topic_name = OUTPUT_TOPIC_NAME_CAM_INFO_RIGHT,
     }
@@ -115,7 +115,7 @@ const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
   {INPUT_COMPONENT_KEY_CORRELATED_TIMESTAMP,
     {
       .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
+      .qos = rclcpp::QoS(1),
       .compatible_data_format = INPUT_DEFAULT_TENSOR_FORMAT_CORRELATED_TIMESTAMP,
       .topic_name = INPUT_TOPIC_NAME_CORRELATED_TIMESTAMP,
     }
@@ -138,15 +138,17 @@ HawkNode::HawkNode(const rclcpp::NodeOptions & options)
   module_id_ = declare_parameter<int>("module_id", 0);
   mode_ = declare_parameter<int>("mode", 0);
   fsync_type_ = declare_parameter<int>("fsync_type", 1);
-  camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "camera");
-  left_optical_frame_name_ = declare_parameter<std::string>("left_optical_frame_name", "left_cam");
-  right_optical_frame_name_ =
-    declare_parameter<std::string>("right_optical_frame_name", "right_cam");
+  use_hw_timestamp_ = declare_parameter<bool>("use_hw_timestamp", true);
+  camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "hawk");
+  left_camera_frame_name_ =
+    declare_parameter<std::string>("left_camera_frame_name", "hawk_left");
+  right_camera_frame_name_ =
+    declare_parameter<std::string>("right_camera_frame_name", "hawk_right");
   left_camera_info_url_ =
     declare_parameter<std::string>("left_camera_info_url", "");
   right_camera_info_url_ =
     declare_parameter<std::string>("right_camera_info_url", "");
-  wide_fov_ = declare_parameter<int>("wide_fov", false);
+  wide_fov_ = declare_parameter<bool>("wide_fov", false);
   // This function sets the QoS parameter for publishers and subscribers in this NITROS node
   rclcpp::QoS input_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos");
   rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
@@ -175,28 +177,31 @@ HawkNode::HawkNode(const rclcpp::NodeOptions & options)
   // Adding callback for left image
   config_map_[OUTPUT_COMPONENT_KEY_CAM_LEFT].callback =
     std::bind(
-    &ArgusCameraNode::ArgusImageCallback, this,
-    std::placeholders::_1, std::placeholders::_2, left_optical_frame_name_);
+    &ArgusCameraNode::ArgusStereoImageCallback, this,
+    std::placeholders::_1, std::placeholders::_2, left_camera_frame_name_);
 
   // Adding callback for right image
   config_map_[OUTPUT_COMPONENT_KEY_CAM_RIGHT].callback =
     std::bind(
-    &ArgusCameraNode::ArgusImageCallback, this,
-    std::placeholders::_1, std::placeholders::_2, right_optical_frame_name_);
+    &ArgusCameraNode::ArgusStereoImageCallback, this,
+    std::placeholders::_1, std::placeholders::_2, right_camera_frame_name_);
 
   // Adding callback for left camera_info
   config_map_[OUTPUT_COMPONENT_KEY_CAM_INFO_LEFT].callback =
     std::bind(
-    &ArgusCameraNode::ArgusCameraInfoCallback, this,
+    &ArgusCameraNode::ArgusStereoCameraInfoCallback, this,
     std::placeholders::_1, std::placeholders::_2, camera_link_frame_name_,
-    left_optical_frame_name_, left_camera_info_);
+    left_camera_frame_name_, left_camera_info_, right_camera_info_,
+    nvidia::isaac_ros::argus::LEFT);
 
   // Adding callback for right camera_info
   config_map_[OUTPUT_COMPONENT_KEY_CAM_INFO_RIGHT].callback =
     std::bind(
-    &ArgusCameraNode::ArgusCameraInfoCallback, this,
+    &ArgusCameraNode::ArgusStereoCameraInfoCallback, this,
     std::placeholders::_1, std::placeholders::_2, camera_link_frame_name_,
-    right_optical_frame_name_, right_camera_info_);
+    right_camera_frame_name_, left_camera_info_, right_camera_info_,
+    nvidia::isaac_ros::argus::RIGHT);
+
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosCorrelatedTimestamp>();
   startNitrosNode();
 }
@@ -224,9 +229,9 @@ void HawkNode::postLoadGraphCallback()
   }
 }
 
-}  // namespace hawk
-}  // namespace isaac_ros
-}  // namespace nvidia
+}   // namespace hawk
+}   // namespace isaac_ros
+}   // namespace nvidia
 
 // Register as a component
 #include "rclcpp_components/register_node_macro.hpp"

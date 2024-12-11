@@ -20,12 +20,57 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Shutdown
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription,
+    OpaqueFunction, Shutdown
+)
 from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode
+
+
+def launch_setup(context, *args, **kwargs):
+
+    target_container = LaunchConfiguration('target_container')
+    namespace = LaunchConfiguration('namespace')
+    bmi_id = LaunchConfiguration('bmi_id')
+    imu_frequency = LaunchConfiguration('imu_frequency')
+
+    parameters_list = [{
+            'bmi_id': bmi_id,
+            'imu_frequency': imu_frequency,
+            'type_negotiation_duration_s': 5,
+        }]
+
+    if LaunchConfigurationEquals('diagnostics', 'True').evaluate(context):
+        parameters_list[0].update({
+            'enable_msg_time_diagnostics': True,
+            'enable_increasing_msg_time_diagnostics': True,
+            'diagnostics_publish_rate': 1.0,
+            'filter_window_size': 30,
+            'topics_list': ['imu'],
+            'expected_fps_list': [float(imu_frequency.perform(context))],
+        })
+
+    bmi088_node = ComposableNode(
+        name='bmi088',
+        package='isaac_ros_imu_bmi088',
+        plugin='nvidia::isaac_ros::imu_bmi088::Bmi088Node',
+        namespace=namespace,
+        remappings=[
+            ('correlated_timestamp', '/correlated_timestamp')
+        ],
+        parameters=parameters_list,
+    )
+
+    load_nodes = LoadComposableNodes(
+        target_container=target_container,
+        composable_node_descriptions=[bmi088_node],
+    )
+
+    return [load_nodes]
 
 
 def generate_launch_description():
@@ -36,25 +81,28 @@ def generate_launch_description():
         default_value='bmi088_container',
     )
 
-    namespace = LaunchConfiguration('namespace')
     namespace_launch_arg = DeclareLaunchArgument(
         'namespace',
         description='Namespace',
         default_value='imu',
     )
 
-    bmi_id = LaunchConfiguration('bmi_id')
     bmi_id_launch_arg = DeclareLaunchArgument(
         'bmi_id',
         description='BMI ID',
         default_value='69',
     )
 
-    imu_frequency = LaunchConfiguration('imu_frequency')
     imu_frequency_launch_arg = DeclareLaunchArgument(
         'imu_frequency',
         description='IMU Frequency',
         default_value='100',
+    )
+
+    diagnostics_launch_arg = DeclareLaunchArgument(
+        'diagnostics',
+        default_value='False',
+        description='Turns on/off publishing to the diagnostics topic.'
     )
 
     launch_args = [
@@ -62,6 +110,7 @@ def generate_launch_description():
         namespace_launch_arg,
         bmi_id_launch_arg,
         imu_frequency_launch_arg,
+        diagnostics_launch_arg,
     ]
 
     container = Node(
@@ -85,28 +134,8 @@ def generate_launch_description():
         condition=LaunchConfigurationEquals('target_container', 'bmi088_container'),
     )
 
-    bmi088_node = ComposableNode(
-        name='bmi088',
-        package='isaac_ros_imu_bmi088',
-        plugin='nvidia::isaac_ros::imu_bmi088::Bmi088Node',
-        namespace=namespace,
-        remappings=[
-            ('correlated_timestamp', '/correlated_timestamp')
-        ],
-        parameters=[{
-            'bmi_id': bmi_id,
-            'imu_frequency': imu_frequency,
-            'type_negotiation_duration_s': 5,
-        }],
-    )
-
-    load_nodes = LoadComposableNodes(
-        target_container=target_container,
-        composable_node_descriptions=[bmi088_node],
-    )
-
     return LaunchDescription(launch_args + [
         container,
         correlated_timestamp_driver_launch,
-        load_nodes,
+        OpaqueFunction(function=launch_setup),
     ])

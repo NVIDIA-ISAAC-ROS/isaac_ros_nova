@@ -29,16 +29,21 @@ ament_auto_add_library(
   compressed_image_to_compressed_video SHARED src/compressed_image_to_compressed_video_node.cpp)
 rclcpp_components_register_nodes(
   compressed_image_to_compressed_video "nvidia::isaac_ros::data_replayer::CompressedImageToCompressedVideoNode")
+ament_target_dependencies(compressed_image_to_compressed_video foxglove_msgs)
 
 set(
   node_plugins
   "${node_plugins}nvidia::isaac_ros::data_replayer::CompressedImageToCompressedVideoNode;$<TARGET_FILE:compressed_image_to_compressed_video>\n")
 
 install(PROGRAMS scripts/camera_converter.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/camera_info_publisher.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/camera_info_writer.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/data_extraction.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/data_processor.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/foxglove_converter.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/image_writer.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/rosbag_converter.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/stereo_camera_info_creator.py DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -52,6 +57,19 @@ if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
   add_launch_test(test/isaac_ros_compressed_image_to_compressed_video_pol_test.py)
 
+  find_package(Python REQUIRED)
+  install(PROGRAMS test/test_node.py DESTINATION lib/${PROJECT_NAME})
+  add_test(
+    NAME TestDataProcessor
+    COMMAND ${PYTHON_EXECUTABLE} -m unittest test/test_data_processor.py
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+  )
 endif()
+
+
+# Embed versioning information into installed files
+ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+generate_version_info(${PROJECT_NAME})
 
 ament_auto_package(INSTALL_TO_SHARE launch)

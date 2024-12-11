@@ -1,0 +1,56 @@
+{
+  "configById": {
+    "DiagnosticStatusPanel!eju4t0": {
+      "topicToRender": "/diagnostics_agg"
+    },
+    "DiagnosticSummary!4hzf6zv": {
+      "minLevel": 0,
+      "pinnedIds": [],
+      "hardwareIdFilter": "",
+      "topicToRender": "/diagnostics_agg",
+      "sortByLevel": true
+    },
+    "DiagnosticStatusPanel!3c317kt": {
+      "selectedHardwareId": "nvidia",
+      "selectedName": "/sensors/hawk/hawk front_stereo_camera left camera_info",
+      "topicToRender": "/diagnostics_agg",
+      "collapsedSections": []
+    },
+    "StateTransitions!3ucbjnx": {
+      "paths": [
+        {
+          "value": "/diagnostics_agg.status[:]{hardware_id==\"\"}{name==\"/sensors/bmi\"}.message",
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/diagnostics_agg.status[:]{hardware_id==\"\"}{name==\"/sensors/hawk\"}.message",
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/diagnostics_agg.status[:]{hardware_id==\"\"}{name==\"/sensors/owl\"}.message",
+          "timestampMethod": "receiveTime"
+        }
+      ],
+      "isSynced": true
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": {
+      "first": "DiagnosticStatusPanel!eju4t0",
+      "second": "DiagnosticSummary!4hzf6zv",
+      "direction": "row"
+    },
+    "second": {
+      "first": "StateTransitions!3ucbjnx",
+      "second": "DiagnosticStatusPanel!3c317kt",
+      "direction": "column"
+    },
+    "splitPercentage": 41.52260638297872
+  }
+}

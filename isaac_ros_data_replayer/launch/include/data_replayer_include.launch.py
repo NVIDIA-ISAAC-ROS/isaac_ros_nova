@@ -29,6 +29,7 @@ def generate_launch_description():
     args.add_arg('replay_loop', 'False')
     args.add_arg('replay_rate', '1.0')
     args.add_arg('replay_delay', 'None')
+    args.add_arg('replay_shutdown_on_exit', 'False')
     args.add_arg('replay_additional_args', '--disable-keyboard-controls')
     args.add_arg('container_name', 'nova_container')
 
@@ -39,6 +40,7 @@ def generate_launch_description():
                        loop=args.replay_loop,
                        rate=args.replay_rate,
                        delay=args.replay_delay,
+                       shutdown_on_exit=args.replay_shutdown_on_exit,
                        additional_bag_play_args=args.replay_additional_args))
     actions.append(
         lu.include(

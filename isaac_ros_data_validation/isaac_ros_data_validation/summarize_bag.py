@@ -33,12 +33,17 @@ if __name__ == '__main__':
         '-v',
         '--verbosity',
         type=str,
-        choices=VERBOSITY_MAP.keys(),
         default='warning',
         help='Verbosity level (default: warning)',
     )
 
     args = parser.parse_args()
+
+    if args.verbosity not in VERBOSITY_MAP:
+        print(
+            f'Verbosity level {args.verbosity} not recognized. '
+            'Options are: {VERBOSITY_MAP.keys()}, defaulting to warning')
+        args.verbosity = 'warning'
 
     _, _, _, q_scores = do_validation(args.input_file, verbose=VERBOSITY_MAP[args.verbosity])
 

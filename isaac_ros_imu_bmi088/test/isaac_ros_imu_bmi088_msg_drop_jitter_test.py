@@ -29,7 +29,7 @@ import pytest
 import rclpy
 from sensor_msgs.msg import Imu
 
-EXPECTED_FPS = 200
+EXPECTED_FPS = 100
 EXPECTED_ACQ_TIME_DT = 1/EXPECTED_FPS
 # Percentage of allowed dropped frames calculated from
 # EXPECTED_FPS and TIMEOUT
@@ -52,7 +52,7 @@ def generate_test_description():
     result_accel = subprocess.run(command_accel, shell=True, capture_output=True, text=True)
     command_gyro = r'cat /sys/bus/iio/devices/iio\:device1/name'
     result_gyro = subprocess.run(command_gyro, shell=True, capture_output=True, text=True)
-    if(result_accel.stdout == 'accelerometer\n' and result_gyro.stdout == 'gyroscope\n'):
+    if (result_accel.stdout == 'accelerometer\n' and result_gyro.stdout == 'gyroscope\n'):
         IsaacROSBmi088MsgDropJitterTest.skip_test = False
         """Generate launch description with all ROS 2 nodes for testing."""
         correlated_timestamp_driver_node = ComposableNode(
@@ -109,14 +109,23 @@ class IsaacROSBmi088MsgDropJitterTest(IsaacROSBaseTest):
                 [('imu', Imu)], received_messages, accept_multiple_messages=True)
 
             try:
-                # Run for TIMEOUT seconds
+                # The BMI088 queues up unpublished messages, therefore the first spin will have
+                # more messages than the second spin, the second spin will have the expected number
+                # Of messages
                 TIMEOUT = 2
-                end_time = time.time() + TIMEOUT
+                first_spin_end_time = time.time() + TIMEOUT
 
-                while time.time() < end_time:
+                while time.time() < first_spin_end_time:
                     rclpy.spin_once(self.node, timeout_sec=0.1)
 
-                imu_msgs = received_messages['imu']
+                first_spin_idx = len(received_messages['imu'])
+
+                second_spin_end_time = time.time() + TIMEOUT
+                while time.time() < second_spin_end_time:
+                    rclpy.spin_once(self.node, timeout_sec=0.1)
+
+                imu_msgs = received_messages['imu'][first_spin_idx:]
+
                 # Calculate the time between first and last msgs' acquire timestamp
                 first_imu_msg = imu_msgs[0].header.stamp
                 last_imu_msg = imu_msgs[-1].header.stamp
@@ -125,8 +134,9 @@ class IsaacROSBmi088MsgDropJitterTest(IsaacROSBaseTest):
                     1e-9*(last_imu_msg.nanosec-first_imu_msg.nanosec)
                 # Check if the difference between first and last msg using
                 #  wall clock time and acq time is within tolerance
-                if(VERBOSE):
+                if (VERBOSE):
                     print('abs(TIMEOUT-acq_time_dt) : ', abs(TIMEOUT-acq_time_dt))
+                    print('acqtime_dt: ', acq_time_dt)
                     print('ALLOWED_DIFF_WALL_CLOCK_ACQ_TIME : ', ALLOWED_DIFF_WALL_CLOCK_ACQ_TIME)
                     print('\n')
                 self.assertLess(abs(TIMEOUT-acq_time_dt),
@@ -135,7 +145,7 @@ class IsaacROSBmi088MsgDropJitterTest(IsaacROSBaseTest):
                 # assuming the fps to be EXPECTED_FPS
                 expected_num_msgs = acq_time_dt * EXPECTED_FPS
                 actual_num_msgs = len(imu_msgs)
-                if(VERBOSE):
+                if (VERBOSE):
                     print('acq_time_dt(secs) : ', acq_time_dt)
                     print('expected_num_msgs : ', expected_num_msgs)
                     print('actual_num_msgs : ', actual_num_msgs)
@@ -156,12 +166,12 @@ class IsaacROSBmi088MsgDropJitterTest(IsaacROSBaseTest):
                         1e-9*(curr_msg_acq_time.nanosec-prev_msg_acq_time.nanosec)
                     prev_msg_acq_time = imu_msg.header.stamp
                     max_jitter = max(max_jitter, abs(EXPECTED_ACQ_TIME_DT-actual_acq_time_dt))
-                    if(VERBOSE):
+                    if (VERBOSE):
                         print('EXPECTED_ACQ_TIME_DT(secs) : ', EXPECTED_ACQ_TIME_DT)
                         print('actual_acq_time_dt(secs) : ', actual_acq_time_dt)
                     self.assertLess(abs(EXPECTED_ACQ_TIME_DT-actual_acq_time_dt),
                                     EXPECTED_ACQ_TIME_DT*FPS_DT_TOL_SECS_PERCENT)
-                if(VERBOSE):
+                if (VERBOSE):
                     print('max_jitter(secs) : ', max_jitter)
 
             finally:

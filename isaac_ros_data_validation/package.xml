@@ -2,10 +2,14 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_data_validation</name>
-  <version>3.1.0</version>
+  <version>3.2.0</version>
   <description>"Validation tools for Isaac ROS Nova"</description>
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>"NVIDIA Isaac ROS Software License"</license>
+  <build_depend>isaac_ros_common</build_depend>
+
+  <depend>isaac_ros_nova_interfaces</depend>
+  <depend>hesai_ros_driver</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

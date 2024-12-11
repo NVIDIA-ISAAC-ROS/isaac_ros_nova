@@ -36,7 +36,7 @@ def generate_test_description():
     command = 'ls /dev/nvpps0'
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     # 0 return code means response was received
-    if(result.returncode == 0):
+    if result.returncode == 0:
         IsaacROSCorrelatedTimestampDriverPOLTest.skip_test = False
         """Generate launch description with all ROS 2 nodes for testing."""
         correlated_timestamp_driver_node = ComposableNode(

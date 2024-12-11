@@ -47,7 +47,7 @@ gxf_result_t ImuMessageCombiner::registerInterface(gxf::Registrar* registrar) {
   result &= registrar->parameter(
       combine_method_, "combine_method", "Combination method",
       "Which method to use for combining data streams, options are interpolate or copy",
-      std::string("copy"));
+      std::string("interpolate"));
   result &= registrar->parameter(
       apply_delay_offsets_, "apply_delay_offsets", "Apply Offsets?",
       "Boolean determining if compensation for group delays are applied", false);

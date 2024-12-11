@@ -78,8 +78,15 @@ if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
   if(${ARCHITECTURE} STREQUAL "aarch64")
     add_launch_test(test/isaac_ros_hawk_timestamp_equality_test.py)
+    add_launch_test(test/isaac_ros_hawk_override_test.py)
   endif()
 
 endif()
+
+
+# Embed versioning information into installed files
+ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+generate_version_info(${PROJECT_NAME})
 
 ament_auto_package(INSTALL_TO_SHARE launch)

@@ -95,7 +95,8 @@ Bmi088Node::Bmi088Node(const rclcpp::NodeOptions & options)
     EXTENSIONS,
     PACKAGE_NAME),
   imu_frequency_(declare_parameter<int>("imu_frequency", 100)),
-  bmi_id_(declare_parameter<int>("bmi_id", 69))
+  bmi_id_(declare_parameter<int>("bmi_id", 69)),
+  recovery_samples_trigger_(declare_parameter<int>("recovery_samples_trigger", 10))
 {
   RCLCPP_DEBUG(get_logger(), "[Bmi088Node] Constructor");
 
@@ -124,6 +125,9 @@ void Bmi088Node::postLoadGraphCallback()
     "bmi088_driver", "nvidia::isaac::Bmi088Driver", "gyro_frequency", imu_frequency_);
   getNitrosContext().setParameterInt32(
     "bmi088_driver", "nvidia::isaac::Bmi088Driver", "bmi_id", bmi_id_);
+  getNitrosContext().setParameterInt32(
+    "bmi088_driver", "nvidia::isaac::Bmi088Driver", "recovery_samples_trigger",
+    recovery_samples_trigger_);
 }
 
 Bmi088Node::~Bmi088Node() {}
