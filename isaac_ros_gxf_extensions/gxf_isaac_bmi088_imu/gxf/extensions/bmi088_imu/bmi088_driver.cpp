@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -36,7 +37,8 @@ constexpr char kAccelPartName[] = "bmi088 accelerometer\n";
 constexpr char kGyroPartName[] = "bmi088 gyroscope\n";
 constexpr char kIioSysfsDevPath[] = "/sys/bus/iio/devices/iio:device";
 constexpr char kIoDevPath[] = "/dev/iio:device";
-constexpr int kPollTimeout = 1000;  // 1 second
+constexpr int kPollTimeoutSamples = 2;  // timeout if poll takes longer than X samples
+constexpr int kPollTimeoutAfterInitMs = 1000;  // timeout after initializing device
 constexpr int kIioBufSize = 64;
 constexpr int kScanSize = 16;
 constexpr int kXIndex = 0;  // channel index for x axis (both accel and gyro)
@@ -71,6 +73,10 @@ gxf_result_t Bmi088Driver::registerInterface(gxf::Registrar* registrar) {
       "69, And one IMU mounted on the chassis with ID 68. On Carter_v2.3 only IMU 69 is available, "
       "and on Carter_v2.4 both IMUs are available",
       69);
+  result &= registrar->parameter(
+    recovery_samples_trigger_, "recovery_samples_trigger", "Recovery Samples Trigger",
+    "Number of failed samples to trigger recovery.",
+    10);
 
   return gxf::ToResultCode(result);
 }
@@ -83,21 +89,6 @@ gxf_result_t Bmi088Driver::start() {
     GXF_LOG_ERROR("Failed to find BMI088 devices");
     return GXF_FAILURE;
   }
-  // Set the sampling frequency for the accelerometer and gyroscope
-  const std::string accel_freq_path = kIioSysfsDevPath + std::to_string(accel_index_);
-  const std::string gyro_freq_path = kIioSysfsDevPath + std::to_string(gyro_index_);
-
-  RETURN_IF_ERROR(
-      writeAndVerifyInt(accel_freq_path + "/in_accel_sampling_frequency", accel_frequency_.get()),
-      nvidia::Severity::ERROR,
-      "Failed to set accelerometer frequency, available frequencies are: 25, 50, 100, "
-      "200, 400, 800, 1600");
-
-  RETURN_IF_ERROR(
-      writeAndVerifyInt(gyro_freq_path + "/in_anglvel_sampling_frequency", gyro_frequency_.get()),
-      nvidia::Severity::ERROR,
-      "Failed to set gyroscope frequency, available frequencies are: 100, 200, 400, "
-      "1000, 2000");
 
   accel_samples_to_drop_ = static_cast<int>(std::ceil(accel_frequency_.get() * kStartupTimeS));
   gyro_samples_to_drop_ = static_cast<int>(std::ceil(gyro_frequency_.get() * kStartupTimeS));
@@ -225,7 +216,11 @@ void Bmi088Driver::asyncDeviceThread(DeviceTypes device_type) {
   // this is a little awkward but it allows us to use the minimum number of copies and locks
   std::mutex& local_mutex = device_type == DeviceTypes::kAccel ? accel_mutex_ : gyro_mutex_;
   auto& local_queue = device_type == DeviceTypes::kAccel ? accel_queue_ : gyro_queue_;
-  int device_index = device_type == DeviceTypes::kAccel ? accel_index_ : gyro_index_;
+  const int device_index = device_type == DeviceTypes::kAccel ? accel_index_ : gyro_index_;
+  const int device_timeout_ms = std::max(1000 * kPollTimeoutSamples /
+      (device_type == DeviceTypes::kAccel ? accel_frequency_.get() : gyro_frequency_.get()), 1);
+  int consecutive_poll_fails = 0;
+  int timeout_ms = kPollTimeoutAfterInitMs;  // start off waiting longer for a poll
 
   float scale = 0.0;
   int buf_fd = 0;
@@ -258,14 +253,34 @@ void Bmi088Driver::asyncDeviceThread(DeviceTypes device_type) {
       break;
     }
 
-    gxf::Expected<int> ret2 = readRawData(pfd, toread, data, read_size);
+    gxf::Expected<int> ret2 = readRawData(pfd, toread, data, read_size, timeout_ms);
     if (!ret2) {
       GXF_LOG_ERROR("Error reading raw data from device %i", device_index);
       worker_thread_state_ = ThreadStates::kStopRequested;
       async_scheduling_term_.get()->setEventState(nvidia::gxf::AsynchronousEventState::EVENT_DONE);
       break;
     } else if (ret2.value() == 0) {
+      consecutive_poll_fails++;
+      // recover device after a certain amount of expected data is missed because of poll timeout
+      if (kPollTimeoutSamples * consecutive_poll_fails >= recovery_samples_trigger_) {
+        GXF_LOG_WARNING("Cleaning up device %i and reinitializing because of poll timeout",
+            device_index);
+        cleanupDevice(device_index, buf_fd);
+        ret = initializeDevice(device_index, scale, buf_fd);
+        if (!ret) {
+          GXF_LOG_ERROR("Error reintializing device  %i", device_index);
+          worker_thread_state_ = ThreadStates::kStopRequested;
+          async_scheduling_term_.get()->setEventState(
+              nvidia::gxf::AsynchronousEventState::EVENT_DONE);
+          break;
+        }
+        pfd.fd = buf_fd;
+        timeout_ms = kPollTimeoutAfterInitMs;  // wait longer for poll because of reinitialization
+      }
       continue;  // Timeout, just keep waiting
+    } else if (timeout_ms != device_timeout_ms) {
+      // after successfull poll use smaller timeout proportial to device sampling rate
+      timeout_ms = device_timeout_ms;
     }
 
     // Iterate through all new data, we may have more than one new data point
@@ -302,6 +317,7 @@ void Bmi088Driver::asyncDeviceThread(DeviceTypes device_type) {
     }    // end data for loop
     // now we have the data, set the event to done so main thread can publish
     async_scheduling_term_.get()->setEventState(nvidia::gxf::AsynchronousEventState::EVENT_DONE);
+    consecutive_poll_fails = 0;
   }  // end main while loop
 
   cleanupDevice(device_index, buf_fd);
@@ -310,6 +326,22 @@ void Bmi088Driver::asyncDeviceThread(DeviceTypes device_type) {
 
 gxf::Expected<void> Bmi088Driver::initializeDevice(int device_index, float& scale, int& buf_fd) {
   GXF_LOG_DEBUG("Initializing iio device %i", device_index);
+
+  const std::string device_name = device_index == accel_index_ ?
+      "accelerometer" : "gyroscope";
+
+  // Set the sampling frequency for the accelerometer and gyroscope
+  const std::string freq_device = device_index == accel_index_ ?
+      "/in_accel_sampling_frequency" : "/in_anglvel_sampling_frequency";
+  const std::string available_freqs = device_index == accel_index_ ?
+      "25, 50, 100, 200, 400, 800, 1600" : "100, 200, 400, 1000, 2000";
+  const std::string freq_path = kIioSysfsDevPath + std::to_string(device_index) + freq_device;
+  const int frequency =
+      device_index == accel_index_ ? accel_frequency_.get() : gyro_frequency_.get();
+  RETURN_IF_ERROR(
+      writeAndVerifyInt(freq_path, frequency),
+      nvidia::Severity::ERROR,
+      "Failed to set " + device_name + " frequency, available frequencies are: " + available_freqs);
 
   const std::string dev_buf_path = kIoDevPath + std::to_string(device_index);
   const std::string sysfs_path = kIioSysfsDevPath + std::to_string(device_index);
@@ -345,8 +377,8 @@ gxf::Expected<void> Bmi088Driver::initializeDevice(int device_index, float& scal
 // return read_size on read
 // return unexpected on failure
 gxf::Expected<int> Bmi088Driver::readRawData(
-    struct pollfd pfd, const int toread, char data[], int& read_size) {
-  int ret = poll(&pfd, 1, kPollTimeout);
+    struct pollfd pfd, const int toread, char data[], int& read_size, const int timeout_ms) {
+  int ret = poll(&pfd, 1, timeout_ms);
   if (ret < 0) {
     // poll uses errno to communicate errors rather than return
     GXF_LOG_ERROR("Failed to poll IIO buffer %s", strerror(errno));

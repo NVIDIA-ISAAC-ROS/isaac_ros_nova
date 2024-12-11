@@ -61,10 +61,10 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"gxf_isaac_argus", "gxf/lib/libgxf_isaac_argus.so"},
   {"gxf_isaac_message_compositor", "gxf/lib/libgxf_isaac_message_compositor.so"}
 };
-const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
-  "isaac_ros_owl",
+const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {};
+const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {
+  "config/isaac_ros_owl_spec.yaml"
 };
-const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {};
 const std::vector<std::string> GENERATOR_RULE_FILENAMES = {
   "config/namespace_injector_rule_owl.yaml"
 };
@@ -113,14 +113,20 @@ OwlNode::OwlNode(const rclcpp::NodeOptions & options)
   module_id_ = declare_parameter<int>("module_id", 0);
   mode_ = declare_parameter<int>("mode", 0);
   fsync_type_ = declare_parameter<int>("fsync_type", 1);
-  camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "camera");
-  optical_frame_name_ = declare_parameter<std::string>("optical_frame_name", "left_cam");
+  use_hw_timestamp_ = declare_parameter<bool>("use_hw_timestamp", true);
+  camera_link_frame_name_ = declare_parameter<std::string>("camera_link_frame_name", "owl_camera");
+  optical_frame_name_ = declare_parameter<std::string>("optical_frame_name", "owl_camera_optical");
   camera_info_url_ = declare_parameter<std::string>("camera_info_url", "");
 
   // This function sets the QoS parameter for publishers and subscribers in this NITROS node
+  rclcpp::QoS input_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos");
   rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos");
   for (auto & config : config_map_) {
-    config.second.qos = output_qos_;
+    if (config.second.topic_name == INPUT_TOPIC_NAME_CORRELATED_TIMESTAMP) {
+      config.second.qos = input_qos_;
+    } else {
+      config.second.qos = output_qos_;
+    }
   }
 
   // Load camera info from a file if provided

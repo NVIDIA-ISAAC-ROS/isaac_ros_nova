@@ -1,0 +1,5 @@
+string rosbag
+---
+bool success
+---
+TransferStatus status

@@ -48,6 +48,7 @@ public:
 private:
   const int imu_frequency_;  // Imu Update Frequency (Hz). Supported values are 100 and 200
   const int bmi_id_;  // Id for BMI088 IMU
+  const int recovery_samples_trigger_;  // Number of failed samples to trigger recovery
 };
 
 }  // namespace imu_bmi088

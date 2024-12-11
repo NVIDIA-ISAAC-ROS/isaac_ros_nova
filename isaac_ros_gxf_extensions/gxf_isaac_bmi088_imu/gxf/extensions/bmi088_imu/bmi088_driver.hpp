@@ -128,7 +128,8 @@ class Bmi088Driver : public gxf::Codelet {
   // Initialize the sensor buffer
   gxf::Expected<void> initializeDevice(int device_index, float& scale, int& buf_fd);
   // Blocking call to read raw data from the device
-  gxf::Expected<int> readRawData(struct pollfd pfd, const int toread, char* data, int& read_size);
+  gxf::Expected<int> readRawData(struct pollfd pfd, const int toread, char* data, int& read_size,
+      const int timeout_ms);
   // write an int to a sysfs file and make sure it worked
   gxf::Expected<void> writeAndVerifyInt(const std::string& filename, int val);
   // enable or disable all channels
@@ -149,6 +150,7 @@ class Bmi088Driver : public gxf::Codelet {
   gxf::Parameter<gxf::Handle<PoseTreeFrame>> imu_frame_;
   gxf::Parameter<gxf::Handle<gxf::AsynchronousSchedulingTerm>> async_scheduling_term_;
   gxf::Parameter<int> bmi_id_;
+  gxf::Parameter<int> recovery_samples_trigger_;
 
   int accel_index_;  // index of the accelerometer device, populated automatically
   int gyro_index_;   // index of the gyroscope device, populated automatically

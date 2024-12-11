@@ -39,7 +39,7 @@ def generate_test_description():
     result_accel = subprocess.run(command_accel, shell=True, capture_output=True, text=True)
     command_gyro = r'cat /sys/bus/iio/devices/iio\:device1/name'
     result_gyro = subprocess.run(command_gyro, shell=True, capture_output=True, text=True)
-    if(result_accel.stdout == 'accelerometer\n' and result_gyro.stdout == 'gyroscope\n'):
+    if (result_accel.stdout == 'accelerometer\n' and result_gyro.stdout == 'gyroscope\n'):
         IsaacROSBmi088POLTest.skip_test = False
         """Generate launch description with all ROS 2 nodes for testing."""
         correlated_timestamp_driver_node = ComposableNode(

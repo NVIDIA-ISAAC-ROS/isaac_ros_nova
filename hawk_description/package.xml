@@ -20,14 +20,14 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>hawk_description</name>
-  <version>3.1.0</version>
+  <version>3.2.0</version>
   <description>Description of Hawk Stereo Camera</description>
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
-  <author>Xavier Perez Sala</author>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <build_depend>isaac_ros_common</build_depend>
 
   <exec_depend>isaac_ros_launch_utils</exec_depend>
   <exec_depend>launch</exec_depend>

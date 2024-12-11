@@ -131,6 +131,7 @@ components:
     fsync_type: 1
     camera_type: 1
     output_format: 0
+    use_hw_timestamp: true
     camera_provider: global_camera_provider/global_camera_provider
     analog_gain_1: 1.0
     analog_gain_2: 1.0

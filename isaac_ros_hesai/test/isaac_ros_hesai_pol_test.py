@@ -36,7 +36,7 @@ def generate_test_description():
     command = 'ping -c 1 -w 2 192.168.1.201'
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     # 0 return code means response was received
-    if(result.returncode == 0):
+    if (result.returncode == 0):
         IsaacROSHesaiPOLTest.skip_test = False
         """Generate launch description with all ROS 2 nodes for testing."""
         hesai_node = ComposableNode(

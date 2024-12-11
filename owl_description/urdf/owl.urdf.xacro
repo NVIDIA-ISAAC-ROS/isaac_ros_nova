@@ -13,7 +13,7 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
   <xacro:include filename="$(find owl_description)/urdf/owl_macro.urdf.xacro"/>
 
   <link name="base_link"/>
-  <xacro:owl_camera name="owl_fisheye" parent="base_link" mount_is_root="true">
+  <xacro:owl_camera name="owl_fisheye" parent="base_link" mount_is_root="true" add_subsensor_frames="true">
       <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
   </xacro:owl_camera>
 </robot>

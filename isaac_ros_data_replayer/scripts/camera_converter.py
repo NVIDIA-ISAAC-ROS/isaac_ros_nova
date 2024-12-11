@@ -30,7 +30,7 @@ from sensor_msgs.msg import Image
 
 
 def ffmpeg(args: List[str]):
-    return subprocess.run(['ffmpeg'] + args, check=True)
+    return subprocess.run(['ffmpeg', '-nostdin'] + args, check=True)
 
 
 def convert(rosbag: str, camera: str, output: str):
@@ -55,7 +55,7 @@ def convert(rosbag: str, camera: str, output: str):
             if camera == topic:
                 file.write(data)
 
-        ffmpeg(['-i', file.name, '-c', 'copy', output, '-y', '-loglevel', 'panic'])
+        ffmpeg(['-i', file.name, '-c', 'copy', output, '-y'])
 
         file.close()
     else:
@@ -72,8 +72,7 @@ def convert(rosbag: str, camera: str, output: str):
                 cv2.imwrite(path, image)
 
         ffmpeg(['-framerate', '30', '-pattern_type', 'glob', '-i',
-                directory.name + '/*.png', '-c:v', 'libx264', '-r', '30',
-                output, '-y', '-loglevel', 'panic'])
+                directory.name + '/*.png', '-c:v', 'libx264', '-r', '30', output, '-y'])
 
     directory.cleanup()
 

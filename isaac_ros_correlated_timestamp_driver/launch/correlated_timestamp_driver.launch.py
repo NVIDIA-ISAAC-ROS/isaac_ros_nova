@@ -42,7 +42,7 @@ def generate_launch_description():
     use_time_since_epoch_launch_arg = DeclareLaunchArgument(
         'use_time_since_epoch',
         description='Use Time Since Epoch',
-        default_value='True',
+        default_value='False',
     )
 
     launch_args = [

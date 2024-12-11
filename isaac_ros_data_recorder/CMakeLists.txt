@@ -22,17 +22,29 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-install(PROGRAMS
-  scripts/record_data.sh
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(DIRECTORY
-  config
-  DESTINATION share/${PROJECT_NAME}
-)
+install(PROGRAMS src/event_recorder_node.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS src/rosbag2_node.py DESTINATION lib/${PROJECT_NAME})
 
 find_package(ament_cmake_auto REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/RecordingInfo.msg"
+  "srv/Event.srv"
+  "srv/StartRecording.srv"
+  "srv/StopRecording.srv"
+  DEPENDENCIES builtin_interfaces
+  ADD_LINTER_TESTS
+)
+
 ament_auto_find_build_dependencies()
+ament_export_dependencies(rosidl_default_runtime)
+
+
+# Embed versioning information into installed files
+ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+generate_version_info(${PROJECT_NAME})
 
 ament_auto_package(INSTALL_TO_SHARE launch)

@@ -19,9 +19,11 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
             Default value: "owl_fisheye", which leads to "owl_fisheye_camera" link name.
     - parent: Parent link where the root of this macro will be connected with a joint.
               Default value: base_link
+    - add_subsensor_frames: Whether to add frames of subs-ensors to the tree (recommended only if
+              driver is not publishing them).
   -->
   <xacro:macro name="owl_camera" params="*origin name=owl_fisheye parent=base_link
-    mount_is_root:=false">
+    mount_is_root:=false add_subsensor_frames:=false">
 
     <!-- Constants -->
     <xacro:property name="M_PI" value="3.1415926535897931"/>
@@ -73,13 +75,16 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
       <child link="${root_link}"/>
     </joint>
 
-    <!-- Optical frame -->
-    <link name="${name}_camera_optical"/>
-    <joint name="${name}_camera_optical_joint" type="fixed">
-        <origin xyz="0.0 0.0 0.0" rpy="${-M_PI/2} 0.0 ${-M_PI/2}"/>
-        <parent link="${name}_camera"/>
-        <child link="${name}_camera_optical"/>
-    </joint>
+    <!-- Whether to add optical frame to the tree (if driver is not publishing it) -->
+    <xacro:if value="${add_subsensor_frames}">
+      <!-- Optical frame -->
+      <link name="${name}_camera_optical"/>
+      <joint name="${name}_camera_optical_joint" type="fixed">
+          <origin xyz="0.0 0.0 0.0" rpy="${-M_PI/2} 0.0 ${-M_PI/2}"/>
+          <parent link="${name}_camera"/>
+          <child link="${name}_camera_optical"/>
+      </joint>
+    </xacro:if>
 
   </xacro:macro>
 </robot>

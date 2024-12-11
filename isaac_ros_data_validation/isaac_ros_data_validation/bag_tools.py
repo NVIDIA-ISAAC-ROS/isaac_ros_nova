@@ -15,10 +15,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import glob
 import io
+import json
 import os
+from typing import NamedTuple
 
-import matplotlib.pyplot as plt
+import hesai_ros_driver.msg
+import isaac_ros_nova_interfaces.msg
 import nav_msgs
 import nav_msgs.msg
 import numpy as np
@@ -28,8 +32,8 @@ import rosbag2_py
 from rosbags.rosbag2 import Reader
 from rosbags.serde import deserialize_cdr
 from rosidl_runtime_py.utilities import get_message
-import sensor_msgs
 import sensor_msgs.msg
+import yaml
 
 VERBOSE_DUMP = 5
 VERBOSE_INFO = 4
@@ -37,6 +41,7 @@ VERBOSE_WARNING = 3
 VERBOSE_COMPACT = 2
 VERBOSE_ERROR = 1
 
+DISPLAY_FIELD_WIDTH = 42
 NUM_BINS = 64
 VERBOSITY_MAP = {
     'dump': VERBOSE_DUMP,
@@ -45,6 +50,19 @@ VERBOSITY_MAP = {
     'compact': VERBOSE_COMPACT,
     'warning': VERBOSE_WARNING,
 }
+
+# Topics that we always store as data, even if store_data=false
+# These are topics that are very cheap to deserialize and that we need more than the
+# header to validate
+ALWAYS_STORE_TOPICS = ['/correlated_timestamp']
+
+
+class MetadataTuple(NamedTuple):
+    """NamedTuple class for storing recording metadata."""
+
+    robotId: str
+    config: str
+    sensors: list
 
 
 def read_rosbag(input_file: str, verbose=VERBOSE_WARNING, store_data=False, bagtype='mcap'):
@@ -89,38 +107,43 @@ def read_rosbag(input_file: str, verbose=VERBOSE_WARNING, store_data=False, bagt
 
         while reader.has_next():
             topic, data, timestamp = reader.read_next()
+            deserialize_full_msg = store_data or topic in ALWAYS_STORE_TOPICS
+
+            # TODO (sgillen) if we need to eventually work with larger (10s++ of GB files)
+            # we may need to look into replacing pandas with dask.
             try:
-                msg_type = get_message(typename(topic))
-                # TODO sgillen - this is the bottleneck, for quick tests we don't actually need
-                # The full message, just the timestamp, but at least for now we still parse the
-                # whole thing. There are some short term gains we can get for free, like just
-                # distributing this over X cores ...
-                msg = deserialize_message(data, msg_type)
+                if deserialize_full_msg:
+                    msg_type = get_message(typename(topic))
+                    msg = deserialize_message(data, msg_type)
+                    msg_data = msg
+                    if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
+                        has_acqtime = True
+                        acqtime = msg.header.stamp.nanosec + msg.header.stamp.sec * 1e9
+                    else:
+                        has_acqtime = False
+                else:
+                    msg_type = get_message('builtin_interfaces/msg/Time')
+                    msg = deserialize_message(data, msg_type)
+                    msg_data = None
+                    if hasattr(msg, 'sec') and hasattr(msg, 'nanosec') and topic != '/rosout':
+                        has_acqtime = True
+                        acqtime = msg.nanosec + msg.sec * 1e9
+                    else:
+                        has_acqtime = False
+
+                if has_acqtime:
+                    if topic not in data_by_topic:
+                        data_by_topic[topic] = {'timestamps': [], 'data': [], 'acqtime': []}
+                        data_by_topic[topic]['data_type'] = get_message(typename(topic))
+                    data_by_topic[topic]['acqtime'].append(acqtime)
+                    data_by_topic[topic]['timestamps'].append(timestamp)
+                    data_by_topic[topic]['data'].append(msg_data)
             except Exception as e:
                 if topic not in fails_by_topic:
                     fails_by_topic[topic] = True
                     if verbose >= VERBOSE_ERROR:
                         print(f'Error deserializing {topic}: {e}. Skipping.')
                 continue
-
-            if hasattr(msg, 'header'):
-                if topic not in data_by_topic:
-                    data_by_topic[topic] = {'timestamps': [], 'data': [], 'acqtime': []}
-                    data_by_topic[topic]['data_type'] = type(msg)
-                data_by_topic[topic]['timestamps'].append(timestamp)
-
-                # TODO (sgillen) if we need to eventually work with larger (10s++ of GB files)
-                # we may need to look into replacing pandas with dask.
-                if store_data:
-                    data_by_topic[topic]['data'].append(msg)
-                if hasattr(msg.header, 'stamp'):
-                    acqtime = msg.header.stamp.nanosec + msg.header.stamp.sec * 1e9
-                    data_by_topic[topic]['acqtime'].append(acqtime)
-                else:
-                    data_by_topic[topic]['acqtime'].append(None)
-            else:
-                pass
-                # print(f'{topic} has no header')
 
         del reader
         return data_by_topic, fails_by_topic
@@ -163,13 +186,68 @@ def read_rosbag(input_file: str, verbose=VERBOSE_WARNING, store_data=False, bagt
         del reader
         return data_by_topic, fails_by_topic
 
+    def _pull_mcap_recording_metadata(rosbag):
+        import subprocess
+
+        if os.path.isfile(rosbag):
+            mcap_path = rosbag
+        else:
+            # Get path to mcap file
+            try:
+                mcap_file = glob.glob(f'{rosbag}/*.mcap')[0]
+            except Exception as e:
+                # Mcap file cannot be found
+                print('ERROR: ' + repr(e))
+                return MetadataTuple('unknown', 'unknown', [])
+            mcap_path = os.path.join(rosbag, mcap_file)
+
+        # Retrieve robotId from mcap metadata
+        command = 'mcap get metadata --name isaac_ros_data_recorder ' + mcap_path
+        try:
+            metadata = subprocess.check_output(command, shell=True, text=True)
+            metadata = json.loads(metadata)
+            robotId = metadata['hostname']
+        except Exception as e:
+            print('ERROR: ' + repr(e))
+            robotId = 'unknown'
+
+        # Retrieve config info from mcap attachment
+        config_copy = 'config_copy.yaml'
+        command = 'mcap get attachment --name /tmp/recording_config.yaml \
+                --output $PWD/' + config_copy + ' ' + mcap_path
+        try:
+            subprocess.check_output(command, shell=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print('ERROR: ' + repr(e))
+
+        try:
+            with open(config_copy, 'r') as file:
+                config_data = yaml.safe_load(file)
+                config = config_data['name']
+                sensors = config_data['sensors']
+        except Exception as e:
+            print('ERROR: ' + repr(e))
+            config = 'unknown'
+            sensors = []
+
+        if os.path.exists(config_copy):
+            os.remove(config_copy)
+
+        # Create NamedTuple
+        metadata = MetadataTuple(robotId, config, sensors)
+
+        return metadata
+
     if not os.path.exists(input_file) and not os.path.isdir(input_file):
         raise FileNotFoundError(f'The specified bag file does not exist: {input_file}')
     try:
         if bagtype == 'mcap':
             data_by_topic, fails_by_topic = _read_mcap_file(input_file, store_data=store_data)
+            metadata = _pull_mcap_recording_metadata(input_file)
         elif bagtype == 'db3':
             data_by_topic, fails_by_topic = _read_db3_file(input_file, store_data=store_data)
+            # db3 files do not include recording metadata for Q-scores
+            metadata = MetadataTuple('unknown', 'unknown', [])
         else:
             raise NotImplementedError(
                 f'Unsupported bag format {bagtype}, supported options are db3 and mcap'
@@ -213,7 +291,7 @@ def read_rosbag(input_file: str, verbose=VERBOSE_WARNING, store_data=False, bagt
             }
         )
         dfs[topic].data_type = type(values['data_type'])
-        if store_data:
+        if store_data or topic in ALWAYS_STORE_TOPICS:
             dfs[topic]['data'] = values['data']
 
     if verbose >= VERBOSE_INFO:
@@ -221,7 +299,7 @@ def read_rosbag(input_file: str, verbose=VERBOSE_WARNING, store_data=False, bagt
         for topic, values in dfs.items():
             print(f'{topic}: type: {values.data_type} count: {len(values["acqtime"])}')
 
-    return dfs
+    return dfs, metadata
 
 
 def do_validation(input_file, verbose=VERBOSE_WARNING, title=None):
@@ -243,17 +321,18 @@ def do_validation(input_file, verbose=VERBOSE_WARNING, title=None):
         dfs: A dictionary of dataframes used for the tests
 
     """
-    dfs = read_rosbag(input_file, verbose=verbose)
+    dfs, metadata = read_rosbag(input_file, verbose=verbose)
     all_stats, all_errors = _analyze_single(dfs, verbose=verbose)
 
     if title is None:
-        title = input_file.split('/')[-1]
-    q_scores = _summarize(all_stats, all_errors, dfs, title, verbose)
+        title = os.path.basename(input_file.rstrip('/'))
+
+    q_scores = _summarize(metadata, all_stats, all_errors, dfs, title, verbose)
 
     return all_stats, all_errors, dfs, q_scores
 
 
-def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
+def _summarize(metadata, all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
     # Summarize a single bag file, takes in errors and stats and prints a nice report about them
     if len(all_errors) == 0:
         print('Warning! No cameras found!')
@@ -271,7 +350,8 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
     sync_buffer = io.StringIO()
 
     drop_tables = []
-    sync_tables = []
+    camera_sync_tables = []
+    clock_sync_table = None
     all_drops = []
     all_captures = []
 
@@ -282,7 +362,9 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
             all_drops.append(stats['num_frames_dropped'])
             all_captures.append(stats['total_frames_captured'])
             drop_tables.append(stats['ascii_drop_table'])
-            print(f'{sensor_key_short:<42} [{stats["ascii_drop_table"]}]', file=table_buffer)
+            print(
+                f'{sensor_key_short:{DISPLAY_FIELD_WIDTH}} [{stats["ascii_drop_table"]}]',
+                file=table_buffer)
             print(
                 f'{sensor_key_short}:\n'
                 f'    - Percent Dropped: {stats["percent_frames_dropped"]}%\n'
@@ -292,25 +374,26 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
                 f'    - Frames Captured: {stats["total_frames_captured"]}\n'
                 f'    - Total Jitter: {stats["mean_absolute_error_all_ms"]} ms\n'
                 f'    - Jitter Excluding Drops: {stats["mean_absolute_error_filtered_ms"]} ms\n'
-                f'    - Largest Frame Drop: {stats["largest_drop"]} ms\n',
+                f'    - Largest Frame Diff: {stats["largest_drop"]} ms\n',
                 file=output_buffer,
             )
 
-        elif 'sync' in sensor_key and 'inter' not in sensor_key:
-            print(f'{sensor_key_short:<42} [{stats["ascii_table"]}]', file=sync_buffer)
-            sync_tables.append(stats['ascii_table'])
+        elif 'stereo_sync' in sensor_key:
+            print(f'{sensor_key_short:{DISPLAY_FIELD_WIDTH}} [{stats["ascii_table"]}]',
+                  file=sync_buffer)
+            camera_sync_tables.append(stats['ascii_table'])
 
             print(
                 f'{sensor_key}:\n'
                 f'    - Num Desyncs : {stats["num_desynced_frames"]}\n'
                 f'    - Percent Desynced: {stats["percent_desynced_frames"]}\n'
                 f'    - Mean Difference : {stats["average_difference_ns"]}\n'
-                f'    - Max Difference: {[stats["max_diff"]]}\n'
-                f'    - Desync Table: {[stats["ascii_table"]]}\n',
+                f'    - Max Difference: {stats["max_diff"]}\n'
+                f'    - Desync Table: [{stats["ascii_table"]}]\n',
                 file=output_buffer,
             )
 
-        elif 'stereo_imu' in sensor_key:
+        elif 'stereo_imu' in sensor_key or 'lidar_packet' in sensor_key:
             print(
                 f'{sensor_key_short}:\n'
                 f'    - Percent Dropped: {stats["percent_indices_dropped"]}%\n'
@@ -341,6 +424,34 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
                 f'    - Jitter Excluding Drops: {stats["mean_absolute_error_filtered_ms"]} ms\n',
                 file=output_buffer,
             )
+        elif 'correlated_timestamp' in sensor_key:
+            print(
+                f'{sensor_key_short}:\n'
+                f'    - Percent Dropped: {stats["percent_frames_dropped"]}%\n'
+                f'    - Number Dropped: {stats["num_frames_dropped"]}\n'
+                f'    - Mean Frequency: {stats["mean_frequency_all"]}\n'
+                f'    - Drop Table: [{stats["ascii_drop_table"]}]\n'
+                f'    - Frames Captured: {stats["total_frames_captured"]}\n'
+                f'    - Total Jitter: {stats["mean_absolute_error_all_ms"]} ms\n'
+                f'    - Jitter Excluding Drops: {stats["mean_absolute_error_filtered_ms"]} ms\n'
+                f'    - Largest Frame Diff: {stats["largest_drop"]} ms\n',
+                file=output_buffer,
+            )
+        elif 'clock_sync' in sensor_key:
+            clock_sync_table = stats['ascii_table']
+            print(
+                f'{sensor_key}:\n'
+                f'    - Num Desyncs : {stats["num_desynced_frames"]}\n'
+                f'    - Percent Desynced: {stats["percent_desynced_frames"]}\n'
+                f'    - Mean Difference : {stats["average_difference_ns"]} ns\n'
+                f'    - Max Difference: {stats["max_diff"]} ns\n'
+                f'    - Mean PHC TSC Difference: {stats["average_phc_tsc_diff"]} ns\n'
+                f'    - Mean PHC SYS Difference: {stats["average_phc_sys_diff"]} ns\n'
+                f'    - Max PHC TSC Difference: {stats["max_phc_tsc_diff"]} ns\n'
+                f'    - Max PHC SYS Difference: {stats["max_phc_sys_diff"]} ns\n'
+                f'    - Desync Table: [{stats["ascii_table"]}]\n',
+                file=output_buffer,
+            )
 
     def _calculate_bucket_kpi(all_tables):
         # Compute the intersection over a list of tables
@@ -363,71 +474,134 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
         drop_table_string = e
 
     try:
-        sync_buckets, sync_table_string = _calculate_bucket_kpi(sync_tables)
+        sync_buckets, sync_table_string = _calculate_bucket_kpi(camera_sync_tables)
     except Exception as e:
         sync_buckets = e
         sync_table_string = e
 
     try:
-        qscore_buckets = 100 * (1 - (drop_buckets / NUM_BINS))
-        qscore_buckets = f'{qscore_buckets:.1f}'
+        qscore_camera_buckets = 100 * (1 - (drop_buckets / NUM_BINS))
+        qscore_camera_buckets = float(f'{qscore_camera_buckets:.1f}')
+    except Exception:
+        qscore_camera_buckets = -1.0
+
+    # TODO should probably not hard code topic names, but at the same time for now the topics are
+    # themselves hard coded in the data recorder.
+    try:
+        qscore_hesai_drops = \
+            100 * (1 - all_stats['/front_3d_lidar/lidar_packets']['percent_indices_dropped'])
+        qscore_hesai_drops = float(f'{qscore_hesai_drops:.1f}')
+        hesai_drop_table = all_stats['/front_3d_lidar/lidar_packets']['ascii_drop_table']
+        hesai_drops_error_msg = ''
     except Exception as e:
-        qscore_buckets = e
+        qscore_hesai_drops = -1.0
+        if type(e) is KeyError and 'front_3d_lidar' not in metadata.sensors:
+            hesai_drops_error_msg = 'No hesai sensors in configuration.'
+        else:
+            hesai_drops_error_msg = repr(e)
+        hesai_drop_table = None
 
     try:
-        qscore_intra_sync = 100 * (1 - (sync_buckets / NUM_BINS))
-        qscore_intra_sync = f'{qscore_intra_sync:.1f}'
+        qscore_hawk_imu_drops =  \
+            100 * (1 - all_stats['/front_stereo_imu/imu']['percent_indices_dropped'])
+        qscore_hawk_imu_drops = float(f'{qscore_hawk_imu_drops:.1f}')
+        hawk_imu_drop_table = all_stats['/front_stereo_imu/imu']['ascii_drop_table']
+        hawk_imu_drops_error_msg = ''
     except Exception as e:
-        qscore_intra_sync = e
+        qscore_hawk_imu_drops = -1.0
+        if type(e) is KeyError and 'front_stereo_imu' not in metadata.sensors:
+            hawk_imu_drops_error_msg = 'No imu sensors in configuration.'
+        else:
+            hawk_imu_drops_error_msg = repr(e)
+        hawk_imu_drop_table = None
 
     try:
-        qscore_inter_sync = (100 - (all_stats['inter_camera_sync']['percent_desynced_frames']))
-        qscore_inter_sync = f'{qscore_inter_sync:.1f}'
-    except Exception as e:
-        qscore_intra_sync = e
+        qscore_camera_intra_sync = 100 * (1 - (sync_buckets / NUM_BINS))
+        qscore_camera_intra_sync = float(f'{qscore_camera_intra_sync:.1f}')
+    except Exception:
+        qscore_camera_intra_sync = -1.0
 
     try:
-        qscore_drops = 100 * (1 - sum(all_drops) / (sum(all_captures) + sum(all_drops)))
-        qscore_drops = f'{qscore_drops:.1f}'
-    except Exception as e:
-        qscore_drops = e
+        qscore_camera_inter_sync = (
+            100 - (all_stats['inter_camera_sync']['percent_desynced_frames']))
+        qscore_camera_inter_sync = float(f'{qscore_camera_inter_sync:.1f}')
+    except Exception:
+        qscore_camera_inter_sync = -1.0
+
+    try:
+        qscore_camera_drops = 100 * (1 - sum(all_drops) / (sum(all_captures) + sum(all_drops)))
+        qscore_camera_drops = float(f'{qscore_camera_drops:.1f}')
+    except Exception:
+        qscore_camera_drops = -1.0
 
     q_scores = {
-        'qscore_buckets': qscore_buckets,
-        'qscore_intra_sync': qscore_intra_sync,
-        'qscore_inter_sync': qscore_inter_sync,
-        'qscore_drops': qscore_drops
+        'robotId': metadata.robotId,
+        'config': metadata.config,
+        'qscore_camera_buckets': qscore_camera_buckets,
+        'qscore_camera_intra_sync': qscore_camera_intra_sync,
+        'qscore_camera_inter_sync': qscore_camera_inter_sync,
+        'qscore_camera_drops': qscore_camera_drops,
+        'qscore_hesai_drops': qscore_hesai_drops,
+        'qscore_hawk_imu_drops': qscore_hawk_imu_drops,
     }
 
     # TODO should probably add verbose = SILENT
     print(title_bar)
 
-    print(f'Camera Drop Q Score: {qscore_drops}')
+    print(f'Camera Drop Q Score: {qscore_camera_drops}')
 
     if (len(drop_tables)):
-        print(f'Camera Bucket Q Score: {qscore_buckets}')
+        print(f'Camera Bucket Q Score: {qscore_camera_buckets}')
     else:
-        print('Camera Bucket Q Score: N/A')
+        print('Camera Bucket Q Score: No camera drop table.')
 
-    if (len(sync_tables)):
-        print(f'Intra Camera Sync Q score: {qscore_intra_sync}')
+    if (len(camera_sync_tables)):
+        print(f'Intra Camera Sync Q score: {qscore_camera_intra_sync}')
     else:
-        print('Intra Camera Sync Q score: N/A')
+        print('Intra Camera Sync Q score: No camera sync table.')
+
+    if hesai_drop_table:
+        print(f'Hesai Drop Q Score: {qscore_hesai_drops}')
+    else:
+        print(f'Hesai Drop Q Score: {hesai_drops_error_msg}')
+
+    if hawk_imu_drop_table:
+        print(f'Hawk Imu Drop Q Score: {qscore_hawk_imu_drops}')
+    else:
+        print(f'Hawk Imu Drop Q Score: {hawk_imu_drops_error_msg}')
 
     print('\n')
 
     if (len(drop_tables)):
-        print(f'{"Camera Drop Table":<42} [{drop_table_string}]')
+        print(f'{"Camera Drop Table":<{DISPLAY_FIELD_WIDTH}} [{drop_table_string}]')
         print(table_buffer.getvalue())
     else:
-        print('No Camera Drop Table Found')
+        print(f'{"Camera Drop Table":{DISPLAY_FIELD_WIDTH}} No camera drop table.')
 
-    if len(sync_tables):
-        print(f'{"Intra Camera Sync Table":<42} [{sync_table_string}]')
+    if len(camera_sync_tables):
+        print(f'{"Intra Camera Sync Table":{DISPLAY_FIELD_WIDTH}} [{sync_table_string}]')
         print(sync_buffer.getvalue())
         print()
     else:
-        print('No Camera Sync Table Found')
+        print(f'{"Camera Sync Table":{DISPLAY_FIELD_WIDTH}} No camera sync table.')
+
+    if hesai_drop_table:
+        print(f'{"Hesai Drop Table":{DISPLAY_FIELD_WIDTH}} [{hesai_drop_table}]')
+    else:
+        print(f'{"Hesai Drop Table":{DISPLAY_FIELD_WIDTH}} {hesai_drops_error_msg}')
+
+    if hawk_imu_drop_table:
+        print(f'{"Camera Imu Drop Table":{DISPLAY_FIELD_WIDTH}} [{hawk_imu_drop_table}]')
+    else:
+        print(f'{"Camera Imu Drop Table":{DISPLAY_FIELD_WIDTH}} {hawk_imu_drops_error_msg}')
+
+    print()
+
+    if clock_sync_table:
+        print(f'{"Clock Sync Table":{DISPLAY_FIELD_WIDTH}} [{clock_sync_table}]')
+        print()
+    else:
+        print('Warning: No Clock Sync Table Found')
 
     print('\n')
 
@@ -441,6 +615,8 @@ def _summarize(all_stats, all_errors, dfs, title, verbose=VERBOSE_WARNING):
         if 'large_drop' in errors and errors['large_drop']['num_errors'] > 0:
             print(f'Warning: {topic} has {errors["large_drop"]["num_errors"]} large drops, '
                   f'greatest was {max(errors["large_drop"]["acqtimes"]) / 1e6} ms')
+        if 'clock_sync' in topic and errors and errors['desync']['num_errors'] > 0:
+            print(f'Warning: {topic} has {errors["desync"]["num_errors"]} desyncs')
 
     print('\n')
 
@@ -477,13 +653,21 @@ def _analyze_single(dfs, verbose=VERBOSE_WARNING):
             sensor_msgs.msg._imu.Imu: (100.0, 0.02),
             sensor_msgs.msg._imu.Metaclass_Imu: (100.0, 0.02),
         },
+        'hesai_acqtime': {
+            hesai_ros_driver.msg._udp_frame.UdpFrame: (10.0, 0.02),
+            hesai_ros_driver.msg._udp_frame.Metaclass_UdpFrame: (10.0, 0.02)
+        },
         'segway_acqtime': {
             sensor_msgs.msg._imu.Imu: (40.0, 0.5),
             sensor_msgs.msg._imu.Metaclass_Imu: (40.0, 0.5),
             nav_msgs.msg._odometry.Odometry: (40.0, 0.5),
             nav_msgs.msg._odometry.Metaclass_Odometry: (40.0, 0.5),
-            sensor_msgs.msg._battery_state.BatteryState: (100.0, 0.5),
-            sensor_msgs.msg._battery_state.Metaclass_BatteryState: (100.0, 0.5),
+            sensor_msgs.msg._battery_state.BatteryState: (1.0, 0.5),
+            sensor_msgs.msg._battery_state.Metaclass_BatteryState: (1.0, 0.5),
+        },
+        'correlated_timestamps_acqtime': {
+            isaac_ros_nova_interfaces.msg._correlated_timestamp.Metaclass_CorrelatedTimestamp: (
+                1.0, 0.1)
         },
         'intra_cam_sync': {
             # 'sync_tolerance_ns': 20000.0,  # 20us
@@ -492,21 +676,42 @@ def _analyze_single(dfs, verbose=VERBOSE_WARNING):
         'inter_cam_sync': {
             'sync_tolerance_ns': 150000.0,  # 150us
             'nominal_frequency': (30.0),
+        },
+        'clock_sync': {
+            'sync_tolerance_ns': 10000.0,  # 10us
         }
     }
 
+    # Camera tests
     camera_topics = [
         topic
         for topic in bag_tester.dfs.keys()
         if 'camera' in topic or 'owl' in topic or 'hawk' in topic
     ]
 
+    camera_acqtime_stats, camera_acqtime_errors = bag_tester.analyze_acquisition_time(
+        camera_topics, test_config['camera_acqtime'])
+
+    sync_stats, sync_errors = bag_tester.check_stereo_sync(
+        camera_topics, test_config['intra_cam_sync'])
+
+    multi_sync_stats, multi_sync_errors = bag_tester.check_multi_sync(
+        camera_topics, test_config['inter_cam_sync'])
+
+    camera_stats = {**camera_acqtime_stats, **sync_stats, **multi_sync_stats}
+    camera_errors = {**camera_acqtime_errors, **sync_errors, **multi_sync_errors}
+
+    # IMU Tests
     imu_topics = [
         topic
         for topic in bag_tester.dfs.keys()
         if 'stereo_imu' in topic
     ]
 
+    imu_stats, imu_errors = bag_tester.analyze_acquisition_time(
+        imu_topics, test_config['imu_acqtime'])
+
+    # Segway Tests
     segway_topics = [
         '/odom',
         '/battery_state',
@@ -516,21 +721,25 @@ def _analyze_single(dfs, verbose=VERBOSE_WARNING):
         '/chassis/imu'
     ]
 
-    camera_stats, camera_errors = bag_tester.analyze_acquisition_time(
-        camera_topics, test_config['camera_acqtime'], show_error_plots=False)
-
-    sync_stats, sync_errors = bag_tester.check_stereo_sync(
-        camera_topics, test_config['intra_cam_sync'])
-
-    multi_sync_stats, multi_sync_errors = bag_tester.check_multi_sync(
-        camera_topics, test_config['inter_cam_sync'])
-
-    imu_stats, imu_errors = bag_tester.analyze_acquisition_time(
-        imu_topics, test_config['imu_acqtime'], show_error_plots=False)
-
     segway_stats, segway_errors = bag_tester.analyze_acquisition_time(
-        segway_topics, test_config['intra_cam_sync'], show_error_plots=False
-    )
+        segway_topics, test_config['segway_acqtime'])
+
+    # Hesai Tests
+    hesai_topics = ['/front_3d_lidar/lidar_packets']
+
+    hesai_stats, hesai_errors = bag_tester.analyze_acquisition_time(
+        hesai_topics, test_config['hesai_acqtime'])
+
+    # Correlator Tests
+    correlator_topic = '/correlated_timestamp'
+
+    correlator_acqtime_stats, correlator_acqtime_errors = bag_tester.analyze_acquisition_time(
+        correlator_topic, test_config['correlated_timestamps_acqtime'])
+    correlator_data_stats, correlator_data_errors = bag_tester.check_clock_sync(
+        correlator_topic, test_config['clock_sync'])
+
+    correlator_stats = {**correlator_acqtime_stats, **correlator_data_stats}
+    correlator_errors = {**correlator_acqtime_errors, **correlator_data_errors}
 
     # TODO this should probably be in summarize above, but making the topic lists
     # would then need to be replicated ...
@@ -542,8 +751,10 @@ def _analyze_single(dfs, verbose=VERBOSE_WARNING):
         print('\n------------------ Segway Data ------------------')
         _pretty_print(segway_stats, print_index=(verbose >= VERBOSE_DUMP))
 
-    all_errors = {**camera_errors, **sync_errors, **multi_sync_errors, **segway_errors}
-    all_stats = {**camera_stats, **sync_stats, **multi_sync_stats, **segway_stats}
+    all_errors = {**camera_errors, **imu_errors,
+                  **segway_errors, **hesai_errors, **correlator_errors}
+    all_stats = {**camera_stats, **imu_stats, **segway_stats, **hesai_stats, **correlator_stats}
+
     return all_stats, all_errors
 
 
@@ -644,8 +855,6 @@ class BagTester:
     def _analyze_acquisition_time(self,
                                   topic,
                                   test_config,
-                                  show_all_plots=False,
-                                  show_error_plots=False,
                                   use_imu_hack=True):
         # analyze_acquisition_time but for a single topic
 
@@ -702,7 +911,7 @@ class BagTester:
             percent_frames_dropped = e
 
         try:
-            percent_indices_dropped = len(indices_to_remove) / len(self.dfs[topic]),
+            percent_indices_dropped = len(indices_to_remove) / len(self.dfs[topic])
         except Exception as e:
             percent_indices_dropped = e
 
@@ -718,10 +927,15 @@ class BagTester:
         end_time = self.dfs[topic]['acqtime'].max() - startup_time_ns
 
         max_drops_in_a_row = test_config.get('max_drops_in_a_row', -1)
-        large_drop_thresh = ((max_drops_in_a_row + 1) * nominal_period_ns) - threshold_ns
-
-        large_drops = acqtime_diffs[(acqtime_diffs > large_drop_thresh) & (
-            self.dfs[topic]['acqtime'] > start_time) & (self.dfs[topic]['acqtime'] < end_time)]
+        if (max_drops_in_a_row == -1):
+            # Don't check for large drops
+            large_drops = pd.Series([])
+            largest_drop_no_startup_ms = 'N/A'
+        else:
+            large_drop_thresh = ((max_drops_in_a_row + 1) * nominal_period_ns) - threshold_ns
+            large_drops = acqtime_diffs[(acqtime_diffs > large_drop_thresh) & (
+                self.dfs[topic]['acqtime'] > start_time) & (self.dfs[topic]['acqtime'] < end_time)]
+            largest_drop_no_startup_ms = large_drops.max() / 1e6
 
         ascii_table = create_ascii_table(acqtime_diffs, indices_to_remove)
 
@@ -729,7 +943,7 @@ class BagTester:
             'total_frames_captured': len(self.dfs[topic]),
             'num_frames_dropped': num_frames_dropped,
             'largest_drop': acqtime_diffs.max() / 1e6,
-            'largest_drop_no_startup': large_drops.max() / 1e6,
+            'largest_drop_no_startup': largest_drop_no_startup_ms,
             'mean_frequency_all': 1e9 / acqtime_diffs.mean(),  # Frequency in Hz
             'mean_frequency_filtered': 1e9 / filtered_acqtime_diffs.mean(),  # Frequency in Hz
             'nominal_frequency': nominal_freq,
@@ -772,41 +986,6 @@ class BagTester:
                 'acqtimes': duplicate_ts.to_list()
             }
         }
-
-        # Convert the difference from nanoseconds to microseconds for plotting
-        us_diff_all = (acqtime_diffs - acqtime_diffs.mean()) / 1e3
-        fig, axs = plt.subplots(1, 2, figsize=(10, 4))
-        axs[0].plot(us_diff_all)
-        axs[0].set_ylabel('Difference (μs)')
-        axs[0].set_xlabel('Sample Index')
-        axs[0].set_title(f'Jitter {topic}', fontsize=10)
-        axs[0].grid(True)
-        axs[0].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-        # Convert the filtered difference from nanoseconds to microseconds
-        us_diff_filtered = (filtered_acqtime_diffs -
-                            filtered_acqtime_diffs.mean()) / 1e3
-        axs[1].plot(us_diff_filtered)
-        axs[1].set_ylabel('Difference (μs)')
-        axs[1].set_xlabel('Sample Index')
-        axs[1].set_title('no drop:', fontsize=10)
-        axs[1].grid(True)
-        axs[1].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-        plt.tight_layout()
-
-        if self.plot_dir:
-            if not os.path.exists(self.plot_dir):
-                os.makedirs(self.plot_dir)
-
-            safe_topic = topic.replace('/', '_')
-            fig.savefig(
-                os.path.join(self.plot_dir, f'{safe_topic}_analysis.png'))
-
-        if show_all_plots or errors['frame_drop'][
-                'num_errors'] and show_error_plots:
-            plt.show()
-        plt.close(fig)
 
         return stats, errors
 
@@ -869,7 +1048,7 @@ class BagTester:
         for pair in paired_topics:
             stats, errors = self._check_stereo_sync(pair, test_config,
                                                     **kwargs)
-            sync_name = ''.join(pair[0].split('left/')) + '/sync'
+            sync_name = ''.join(pair[0].split('left/')) + '/stereo_sync'
             all_stats[sync_name] = stats
             all_errors[sync_name] = errors
 
@@ -877,7 +1056,8 @@ class BagTester:
 
     def _check_stereo_sync(self, topics, test_config):
         acqtimes_0 = self.dfs[topics[0]]['acqtime']
-        acqtimes_1 = self.dfs[topics[1]]['acqtime']
+        # convert pandas Series to NumPy array for faster calculations
+        acqtimes_1 = self.dfs[topics[1]]['acqtime'].to_numpy()
         sync_tolerance_ns = test_config['sync_tolerance_ns']
 
         if len(self.dfs[topics[0]]['acqtime']) > len(
@@ -888,7 +1068,7 @@ class BagTester:
 
         differences = pd.Series(np.zeros(len(acqtimes_0)))
         for i, ts in enumerate(acqtimes_0):
-            closest_index = np.abs(acqtimes_1 - ts).idxmin()
+            closest_index = np.abs(acqtimes_1 - ts).argmin()
             difference = abs(ts - acqtimes_1[closest_index])
             differences[i] = difference
 
@@ -941,6 +1121,9 @@ class BagTester:
 
 
         """
+        if len(topics) < 2:
+            return {}, {}
+
         # Calculate differences matrix
         differences_matrix = {}
         for i, topic_i in enumerate(topics):
@@ -1016,5 +1199,81 @@ class BagTester:
                     'indices': list(all_desynced_indices),
                     'acqtimes': acqtimes[list(all_desynced_indices)].to_list()
                 }}}
+
+        return stats, errors
+
+    def check_clock_sync(self, correlated_timestamp_topic, test_config, **kwargs):
+        """
+        Check for sync between clocks based on correlated timestamps data.
+
+        Args:
+        ----
+            topics: (list) List of topics to check
+            test_config: (dict) Dictionary of test configuration
+
+        Returns
+        -------
+            stats (dict): Dictionary of statistics
+            errors (dict): Dictionary of errors
+
+        """
+        if (correlated_timestamp_topic not in self.dfs or
+                len(self.dfs[correlated_timestamp_topic]) == 0):
+            return {}, {}
+
+        initial_phc_tsc_diff = self.dfs[correlated_timestamp_topic]['data'][0].phc_val - \
+            self.dfs[correlated_timestamp_topic]['data'][0].tsc_val
+        initial_phc_sys_diff = self.dfs[correlated_timestamp_topic]['data'][0].phc2_val - \
+            self.dfs[correlated_timestamp_topic]['data'][0].sys_val
+
+        acqtimes = self.dfs[correlated_timestamp_topic]['acqtime']
+        phc_tsc_errors = set()
+        phc_sys_errors = set()
+        phc_tsc_diffs = []
+        phc_sys_diffs = []
+
+        for i, entry in enumerate(self.dfs[correlated_timestamp_topic]['data']):
+
+            phc_tsc_diff = abs(entry.phc_val - entry.tsc_val - initial_phc_tsc_diff)
+            phc_tsc_diffs.append(phc_tsc_diff)
+            if phc_tsc_diff > test_config['sync_tolerance_ns']:
+                phc_tsc_errors.add(i)
+
+            phc_sys_diff = abs(entry.phc2_val - entry.sys_val - initial_phc_sys_diff)
+            phc_sys_diffs.append(phc_sys_diff)
+            if phc_sys_diff > test_config['sync_tolerance_ns']:
+                phc_sys_errors.add(i)
+
+        combined_diffs = np.array(phc_tsc_diffs + phc_sys_diffs)
+        phc_tsc_diffs = np.array(phc_tsc_diffs)
+        phc_sys_diffs = np.array(phc_sys_diffs)
+        combined_errors = phc_tsc_errors | phc_sys_errors
+        ascii_table = create_ascii_table(acqtimes, combined_errors)
+
+        stats = {
+            'clock_sync': {
+                'ascii_table': ascii_table,
+                'num_desynced_frames': len(combined_errors),
+                'percent_desynced_frames': (len(combined_errors) / len(acqtimes)) * 100,
+                'indices': combined_errors,
+                'acqtimes': acqtimes[list(combined_errors)],
+                'average_difference_ns': combined_diffs.mean(),
+                'max_diff': combined_diffs.max(),
+                'average_phc_tsc_diff': phc_tsc_diffs.mean(),
+                'average_phc_sys_diff': phc_sys_diffs.mean(),
+                'max_phc_tsc_diff': phc_tsc_diffs.max(),
+                'max_phc_sys_diff': phc_sys_diffs.max(),
+            }
+        }
+
+        errors = {
+            'clock_sync': {
+                'desync': {
+                    'num_errors': len(combined_errors),
+                    'indices': combined_errors,
+                    'acqtimes': acqtimes[list(phc_tsc_errors)]
+                },
+            }
+        }
 
         return stats, errors

@@ -18,13 +18,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from argparse import ArgumentParser
-import json
 from multiprocessing import Lock, Process
 import os
 import signal
 import subprocess
 import time
 
+from camera_info_publisher import load_camera_info
 import cv2
 import cv_bridge
 from launch import LaunchDescription, LaunchService
@@ -38,27 +38,8 @@ from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from stereo_msgs.msg import DisparityImage
 
 
-ISAAC_ROS_DNN_STEREO_DEPTH = '/workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_dnn_stereo_depth'
-DEFAULT_ENGINE_FILE_PATH = ISAAC_ROS_DNN_STEREO_DEPTH + '/resources/ess.engine'
-
-
-def json_to_camera_info(intrinsics):
-    msg = CameraInfo()
-    msg.height = intrinsics['height']
-    msg.width = intrinsics['width']
-    msg.distortion_model = intrinsics['distortion_model']
-    msg.d = intrinsics['d']
-    msg.k = intrinsics['k']
-    msg.r = intrinsics['r']
-    msg.p = intrinsics['p']
-    msg.binning_x = intrinsics['binning_x']
-    msg.binning_y = intrinsics['binning_y']
-    msg.roi.x_offset = intrinsics['roi']['x_offset']
-    msg.roi.y_offset = intrinsics['roi']['y_offset']
-    msg.roi.height = intrinsics['roi']['height']
-    msg.roi.width = intrinsics['roi']['width']
-    msg.roi.do_rectify = intrinsics['roi']['do_rectify']
-    return msg
+DEFAULT_ENGINE_FILE_PATH = 'isaac_ros_assets/models/dnn_stereo_disparity' \
+                         + '/dnn_stereo_disparity_v4.1.0_onnx/ess.engine'
 
 
 class DataExtraction:
@@ -67,12 +48,13 @@ class DataExtraction:
                  rosbag,
                  camera,
                  output,
-                 output_width=960,
-                 output_height=576,
                  min_disparity=3.0,
                  max_disparity=200.0,
                  threshold=0.0,
-                 engine_file_path=DEFAULT_ENGINE_FILE_PATH):
+                 engine_file_path=DEFAULT_ENGINE_FILE_PATH,
+                 mode='depth',
+                 encode_mp4=True,
+                 image_extension='.png'):
         self.rosbag = rosbag
         self.namespace = camera
         if camera in output:
@@ -80,39 +62,66 @@ class DataExtraction:
         else:
             self.output = output + '/' + camera
 
-        self.output_width = 960
-        self.output_height = 576
+        os.makedirs(self.output, exist_ok=True)
         self.min_disparity = min_disparity
         self.max_disparity = max_disparity
         self.threshold = threshold
         self.engine_file_path = engine_file_path
+        if mode not in ('raw', 'rectify', 'depth'):
+            raise ValueError("'mode' must be 'raw', 'rectify', or 'depth'")
+        self.mode = mode
+        self.encode_mp4 = encode_mp4
+        self.image_extension = image_extension
 
         self.bridge = cv_bridge.CvBridge()
         self.left_image_msgs = {}
         self.right_image_msgs = {}
+        self.left_timestamp_file = open(self.output + '/left_timestamp.txt', 'wt')
+        self.right_timestamp_file = open(self.output + '/right_timestamp.txt', 'wt')
         self.image_count = 0
         self.disparity_count = 0
         self.depth_count = 0
         self.lock = Lock()
 
+    def remove_top_n(cache, n):
+        # Sort the dictionary by keys
+        sorted_dict = dict(sorted(cache.items()))
+        # Get the keys to remove
+        keys_to_remove = list(sorted_dict.keys())[:n]
+        # Remove the first n items
+        for key in keys_to_remove:
+            del sorted_dict[key]
+        return sorted_dict
+
     def store(msg, cache):
         if msg.header.stamp.sec not in cache:
             cache[msg.header.stamp.sec] = {}
         cache[msg.header.stamp.sec][msg.header.stamp.nanosec] = msg
+        # we only cache maximum 5s images
+        if len(cache) > 5:
+            DataExtraction.remove_top_n(cache, 1)
 
     def load(msg, cache):
         if (msg.header.stamp.sec in cache and
                 msg.header.stamp.nanosec in cache[msg.header.stamp.sec]):
-            return cache[msg.header.stamp.sec][msg.header.stamp.nanosec]
+            return cache[msg.header.stamp.sec].pop(msg.header.stamp.nanosec)
         else:
             return None
 
     def write_image_pair(self, left_image_msg, right_image_msg):
         for value in ('left', 'right'):
-            path = self.output + '/' + value + '/' + str(self.image_count).zfill(5) + '.png'
-            msg = left_image_msg if value == 'left' else right_image_msg
+            path = self.output + '/' + value + '/' + \
+                str(self.image_count).zfill(10) + self.image_extension
+            if value == 'left':
+                timestamp_file = self.left_timestamp_file
+                msg = left_image_msg
+            else:
+                timestamp_file = self.right_timestamp_file
+                msg = right_image_msg
             image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             cv2.imwrite(path, image)
+            timestamp_file.write(str(msg.header.stamp.sec * 1000000000 +
+                                 msg.header.stamp.nanosec) + '\n')
 
         self.image_count += 1
 
@@ -131,7 +140,7 @@ class DataExtraction:
             DataExtraction.store(right_image_msg, self.right_image_msgs)
 
     def disparity_callback(self, disparity_msg):
-        path = self.output + '/disparity/' + str(self.disparity_count).zfill(5) + '.png'
+        path = self.output + '/disparity/' + str(self.disparity_count).zfill(10) + '.png'
         disparity = self.bridge.imgmsg_to_cv2(disparity_msg.image)
         disparity = disparity.clip(self.min_disparity, self.max_disparity)
         disparity = (disparity - self.min_disparity) / self.max_disparity * 255
@@ -142,21 +151,25 @@ class DataExtraction:
             self.disparity_count += 1
 
     def depth_callback(self, depth_msg):
-        path = self.output + '/depth/' + str(self.depth_count).zfill(5) + '.pfm'
+        path = self.output + '/depth/' + str(self.depth_count).zfill(10) + '.pfm'
         image = self.bridge.imgmsg_to_cv2(depth_msg)
         cv2.imwrite(path, image)
 
         with self.lock:
             self.depth_count += 1
 
-    def rectify(self, camera_info_topic='/camera_info'):
+    def decode(self, camera_info_topic='/camera_info'):
+        nodes = []
+
+        topic = camera_info_topic if self.mode == 'raw' else '/camera_info_resized'
+
         left_camera_info_writer = Node(
             name='left_camera_info_writer',
             package='isaac_ros_data_replayer',
             executable='camera_info_writer.py',
             namespace=self.namespace,
             parameters=[{
-                'topic': 'left/camera_info_resized',
+                'topic': 'left' + topic,
                 'output': self.output,
             }],
         )
@@ -167,12 +180,12 @@ class DataExtraction:
             executable='camera_info_writer.py',
             namespace=self.namespace,
             parameters=[{
-                'topic': 'right/camera_info_resized',
+                'topic': 'right' + topic,
                 'output': self.output,
             }],
         )
 
-        left_decoder = ComposableNode(
+        nodes.append(ComposableNode(
             name='left_decoder',
             package='isaac_ros_h264_decoder',
             plugin='nvidia::isaac_ros::h264_decoder::DecoderNode',
@@ -181,9 +194,9 @@ class DataExtraction:
                 ('image_compressed', 'left/image_compressed'),
                 ('image_uncompressed', 'left/image_raw'),
             ],
-        )
+        ))
 
-        right_decoder = ComposableNode(
+        nodes.append(ComposableNode(
             name='right_decoder',
             package='isaac_ros_h264_decoder',
             plugin='nvidia::isaac_ros::h264_decoder::DecoderNode',
@@ -192,89 +205,86 @@ class DataExtraction:
                 ('image_compressed', 'right/image_compressed'),
                 ('image_uncompressed', 'right/image_raw'),
             ],
-        )
+        ))
 
-        left_rectify = ComposableNode(
-            name='left_rectify',
-            package='isaac_ros_image_proc',
-            plugin='nvidia::isaac_ros::image_proc::RectifyNode',
-            namespace=self.namespace,
-            remappings=[
-                ('image_raw', 'left/image_raw'),
-                ('camera_info', 'left' + camera_info_topic),
-                ('image_rect', 'left/image_rect'),
-                ('camera_info_rect', 'left/camera_info_rect'),
-            ],
-            parameters=[{
-                'output_width': 1920,
-                'output_height': 1200,
-            }],
-        )
+        if self.mode in ('rectify', 'depth'):
+            output_width = 960 if self.mode == 'depth' else 1920
+            output_height = 576 if self.mode == 'depth' else 1200
 
-        right_rectify = ComposableNode(
-            name='right_rectify',
-            package='isaac_ros_image_proc',
-            plugin='nvidia::isaac_ros::image_proc::RectifyNode',
-            namespace=self.namespace,
-            remappings=[
-                ('image_raw', 'right/image_raw'),
-                ('camera_info', 'right' + camera_info_topic),
-                ('image_rect', 'right/image_rect'),
-                ('camera_info_rect', 'right/camera_info_rect'),
-            ],
-            parameters=[{
-                'output_width': 1920,
-                'output_height': 1200,
-            }],
-        )
+            nodes.append(ComposableNode(
+                name='left_rectify',
+                package='isaac_ros_image_proc',
+                plugin='nvidia::isaac_ros::image_proc::RectifyNode',
+                namespace=self.namespace,
+                remappings=[
+                    ('image_raw', 'left/image_raw'),
+                    ('camera_info', 'left' + camera_info_topic),
+                    ('image_rect', 'left/image_rect'),
+                    ('camera_info_rect', 'left/camera_info_rect'),
+                ],
+                parameters=[{
+                    'output_width': 1920,
+                    'output_height': 1200,
+                }],
+            ))
 
-        left_resize = ComposableNode(
-            name='left_resize',
-            package='isaac_ros_image_proc',
-            plugin='nvidia::isaac_ros::image_proc::ResizeNode',
-            namespace=self.namespace,
-            remappings=[
-                ('image', 'left/image_rect'),
-                ('camera_info', 'left/camera_info_rect'),
-                ('resize/image', 'left/image_resized'),
-                ('resize/camera_info', 'left/camera_info_resized'),
-            ],
-            parameters=[{
-                'output_width': self.output_width,
-                'output_height': self.output_height,
-            }],
-        )
+            nodes.append(ComposableNode(
+                name='right_rectify',
+                package='isaac_ros_image_proc',
+                plugin='nvidia::isaac_ros::image_proc::RectifyNode',
+                namespace=self.namespace,
+                remappings=[
+                    ('image_raw', 'right/image_raw'),
+                    ('camera_info', 'right' + camera_info_topic),
+                    ('image_rect', 'right/image_rect'),
+                    ('camera_info_rect', 'right/camera_info_rect'),
+                ],
+                parameters=[{
+                    'output_width': 1920,
+                    'output_height': 1200,
+                }],
+            ))
 
-        right_resize = ComposableNode(
-            name='right_resize',
-            package='isaac_ros_image_proc',
-            plugin='nvidia::isaac_ros::image_proc::ResizeNode',
-            namespace=self.namespace,
-            remappings=[
-                ('image', 'right/image_rect'),
-                ('camera_info', 'right/camera_info_rect'),
-                ('resize/image', 'right/image_resized'),
-                ('resize/camera_info', 'right/camera_info_resized'),
-            ],
-            parameters=[{
-                'output_width': self.output_width,
-                'output_height': self.output_height,
-            }],
-        )
+            nodes.append(ComposableNode(
+                name='left_resize',
+                package='isaac_ros_image_proc',
+                plugin='nvidia::isaac_ros::image_proc::ResizeNode',
+                namespace=self.namespace,
+                remappings=[
+                    ('image', 'left/image_rect'),
+                    ('camera_info', 'left/camera_info_rect'),
+                    ('resize/image', 'left/image_resized'),
+                    ('resize/camera_info', 'left/camera_info_resized'),
+                ],
+                parameters=[{
+                    'output_width': output_width,
+                    'output_height': output_height,
+                }],
+            ))
+
+            nodes.append(ComposableNode(
+                name='right_resize',
+                package='isaac_ros_image_proc',
+                plugin='nvidia::isaac_ros::image_proc::ResizeNode',
+                namespace=self.namespace,
+                remappings=[
+                    ('image', 'right/image_rect'),
+                    ('camera_info', 'right/camera_info_rect'),
+                    ('resize/image', 'right/image_resized'),
+                    ('resize/camera_info', 'right/camera_info_resized'),
+                ],
+                parameters=[{
+                    'output_width': output_width,
+                    'output_height': output_height,
+                }],
+            ))
 
         container = ComposableNodeContainer(
             name='rectify_node',
             package='rclcpp_components',
             executable='component_container_mt',
             namespace=self.namespace,
-            composable_node_descriptions=[
-                left_decoder,
-                right_decoder,
-                left_rectify,
-                right_rectify,
-                left_resize,
-                right_resize,
-            ],
+            composable_node_descriptions=nodes,
         )
 
         launch = LaunchService()
@@ -358,6 +368,8 @@ class DataExtraction:
             'right_camera_info_rect': '/' + self.namespace + '/right/camera_info_rect',
             'left_image_compressed':  '/' + self.namespace + '/left/image_compressed',
             'right_image_compressed': '/' + self.namespace + '/right/image_compressed',
+            'left_image_raw':         '/' + self.namespace + '/left/image_raw',
+            'right_image_raw':        '/' + self.namespace + '/right/image_raw',
             'left_image_rect':        '/' + self.namespace + '/left/image_rect',
             'right_image_rect':       '/' + self.namespace + '/right/image_rect',
             'left_image_resized':     '/' + self.namespace + '/left/image_resized',
@@ -379,10 +391,11 @@ class DataExtraction:
         right_image_compressed = node.create_publisher(
             CompressedImage, topics['right_image_compressed'], 10)
 
-        left_image_resized = node.create_subscription(
-            Image, topics['left_image_resized'], self.left_image_callback, 10)
-        right_image_resized = node.create_subscription(
-            Image, topics['right_image_resized'], self.right_image_callback, 10)
+        image_topic = 'image_raw' if self.mode == 'raw' else 'image_resized'
+        left_image = node.create_subscription(
+            Image, topics['left_' + image_topic], self.left_image_callback, 10)
+        right_image = node.create_subscription(
+            Image, topics['right_' + image_topic], self.right_image_callback, 10)
 
         left_camera_info_msg = None
         right_camera_info_msg = None
@@ -404,8 +417,8 @@ class DataExtraction:
         os.makedirs(self.output + '/left', exist_ok=True)
         os.makedirs(self.output + '/right', exist_ok=True)
 
-        rectify = Process(target=self.rectify, args=(camera_info_topic,))
-        rectify.start()
+        decode = Process(target=self.decode, args=(camera_info_topic,))
+        decode.start()
         time.sleep(5)
 
         while reader.has_next():
@@ -423,85 +436,86 @@ class DataExtraction:
                 right_image_compressed.publish(right_image_compressed_msg)
                 rclpy.spin_once(node, timeout_sec=1.0)
 
-        os.kill(rectify.pid, signal.SIGINT)
-        rectify.join()
+        os.kill(decode.pid, signal.SIGINT)
+        decode.join()
 
-        node.destroy_subscription(right_image_resized)
-        node.destroy_subscription(left_image_resized)
+        node.destroy_subscription(left_image)
+        node.destroy_subscription(right_image)
 
         node.destroy_publisher(right_image_compressed)
         node.destroy_publisher(left_image_compressed)
         node.destroy_publisher(right_camera_info)
         node.destroy_publisher(left_camera_info)
 
-        self.png_to_mp4('left')
-        self.png_to_mp4('right')
+        if self.encode_mp4:
+            self.png_to_mp4('left')
+            self.png_to_mp4('right')
 
-        left_camera_info_json = open(self.output + '/left_camera_info_resized.json', 'r')
-        left_camera_info_msg = json_to_camera_info(json.load(left_camera_info_json))
-        left_camera_info_json.close()
+        if self.mode == 'depth':
+            left_camera_info_msg = load_camera_info(
+                self.output + '/left_camera_info_resized.json')
+            right_camera_info_msg = load_camera_info(
+                self.output + '/right_camera_info_resized.json')
 
-        right_camera_info_json = open(self.output + '/right_camera_info_resized.json', 'r')
-        right_camera_info_msg = json_to_camera_info(json.load(right_camera_info_json))
-        right_camera_info_json.close()
+            left_camera_info_rect = node.create_publisher(
+                CameraInfo, topics['left_camera_info_rect'], 10)
+            right_camera_info_rect = node.create_publisher(
+                CameraInfo, topics['right_camera_info_rect'], 10)
+            left_image_rect = node.create_publisher(
+                Image, topics['left_image_rect'], 10)
+            right_image_rect = node.create_publisher(
+                Image, topics['right_image_rect'], 10)
 
-        left_camera_info_rect = node.create_publisher(
-            CameraInfo, topics['left_camera_info_rect'], 10)
-        right_camera_info_rect = node.create_publisher(
-            CameraInfo, topics['right_camera_info_rect'], 10)
-        left_image_rect = node.create_publisher(
-            Image, topics['left_image_rect'], 10)
-        right_image_rect = node.create_publisher(
-            Image, topics['right_image_rect'], 10)
+            disparity = node.create_subscription(
+                DisparityImage, topics['disparity'], self.disparity_callback, 10)
+            depth = node.create_subscription(
+                Image, topics['depth'], self.depth_callback, 10)
 
-        disparity = node.create_subscription(
-            DisparityImage, topics['disparity'], self.disparity_callback, 10)
-        depth = node.create_subscription(
-            Image, topics['depth'], self.depth_callback, 10)
+            os.makedirs(self.output + '/disparity', exist_ok=True)
+            os.makedirs(self.output + '/depth', exist_ok=True)
 
-        os.makedirs(self.output + '/disparity', exist_ok=True)
-        os.makedirs(self.output + '/depth', exist_ok=True)
+            ess = Process(target=self.ess)
+            ess.start()
+            time.sleep(5)
 
-        ess = Process(target=self.ess)
-        ess.start()
-        time.sleep(5)
+            for i in range(self.image_count):
+                for value in ('left', 'right'):
+                    path = self.output + '/' + value + '/' + str(i).zfill(10) + '.png'
+                    image = cv2.imread(path)
+                    msg = self.bridge.cv2_to_imgmsg(image, 'rgb8')
 
-        for i in range(self.image_count):
-            for value in ('left', 'right'):
-                path = self.output + '/' + value + '/' + str(i).zfill(5) + '.png'
-                image = cv2.imread(path)
-                msg = self.bridge.cv2_to_imgmsg(image, 'rgb8')
+                    if value == 'left':
+                        left_camera_info_rect.publish(left_camera_info_msg)
+                        left_image_rect.publish(msg)
+                    elif value == 'right':
+                        right_camera_info_rect.publish(right_camera_info_msg)
+                        right_image_rect.publish(msg)
 
-                if value == 'left':
-                    left_camera_info_rect.publish(left_camera_info_msg)
-                    left_image_rect.publish(msg)
-                elif value == 'right':
-                    right_camera_info_rect.publish(right_camera_info_msg)
-                    right_image_rect.publish(msg)
-
-            spin_count = i + 1
-
-            with self.lock:
-                done = self.disparity_count == spin_count and self.depth_count == spin_count
-
-            while not done:
-                rclpy.spin_once(node)
+                spin_count = i + 1
 
                 with self.lock:
                     done = self.disparity_count == spin_count and self.depth_count == spin_count
 
-        os.kill(ess.pid, signal.SIGINT)
-        ess.join()
+                while not done:
+                    rclpy.spin_once(node)
 
-        node.destroy_subscription(depth)
-        node.destroy_subscription(disparity)
+                    with self.lock:
+                        done = (self.disparity_count == spin_count and
+                                self.depth_count == spin_count)
 
-        node.destroy_publisher(right_image_rect)
-        node.destroy_publisher(left_image_rect)
-        node.destroy_publisher(right_camera_info_rect)
-        node.destroy_publisher(left_camera_info_rect)
+            os.kill(ess.pid, signal.SIGINT)
+            ess.join()
 
-        self.png_to_mp4('disparity')
+            node.destroy_subscription(depth)
+            node.destroy_subscription(disparity)
+
+            node.destroy_publisher(right_image_rect)
+            node.destroy_publisher(left_image_rect)
+            node.destroy_publisher(right_camera_info_rect)
+            node.destroy_publisher(left_camera_info_rect)
+
+            if self.encode_mp4:
+                self.png_to_mp4('disparity')
 
         node.destroy_node()
 
@@ -522,14 +536,6 @@ def parse_args():
                         help='output directory',
                         type=str,
                         required=True)
-    parser.add_argument('--output_width',
-                        help='output width',
-                        type=int,
-                        default=960)
-    parser.add_argument('--output_height',
-                        help='output height',
-                        type=int,
-                        default=576)
     parser.add_argument('--min_disparity',
                         help='minimum disparity value',
                         type=float,
@@ -546,6 +552,17 @@ def parse_args():
                         help='ESS engine file path',
                         type=str,
                         default=DEFAULT_ENGINE_FILE_PATH)
+    parser.add_argument('--encode_mp4',
+                        help='Whether or not encode mp4',
+                        action='store_true')
+    parser.add_argument('--mode',
+                        help="image extraction mode ('raw', 'rectify', or 'depth')",
+                        type=str,
+                        default='depth')
+    parser.add_argument('--image_extension',
+                        help='The file extension of the image to save',
+                        type=str,
+                        default='.png')
     return parser.parse_args()
 
 
@@ -555,12 +572,13 @@ def main():
         rosbag=args.rosbag,
         camera=args.camera,
         output=args.output,
-        output_width=args.output_width,
-        output_height=args.output_height,
         min_disparity=args.min_disparity,
         max_disparity=args.max_disparity,
         threshold=args.threshold,
-        engine_file_path=args.engine_file_path)
+        engine_file_path=args.engine_file_path,
+        mode=args.mode,
+        encode_mp4=args.encode_mp4,
+        image_extension=args.image_extension)
     de.extract_data()
 
 

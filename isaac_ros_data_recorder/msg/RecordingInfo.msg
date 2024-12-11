@@ -1,0 +1,9 @@
+bool recording
+float64 timestamp
+float64 duration
+string uuid
+string author
+string title
+string location
+string description
+string hostname

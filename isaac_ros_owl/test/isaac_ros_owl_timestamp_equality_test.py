@@ -17,7 +17,7 @@
 
 import os
 import pathlib
-import shlex
+import socket
 import subprocess
 import time
 
@@ -31,18 +31,26 @@ import rclpy
 from sensor_msgs.msg import CameraInfo, Image
 
 MODULE_ID = 0
-DEVICE_ID = MODULE_ID*2
+DEVICE_ID = 0
 
 
 @pytest.mark.rostest
 def generate_test_description():
 
-    command = f'"if [ -c /dev/video{DEVICE_ID} ]; then echo Device Found; \
-                else echo Device Not Found; fi"'
-    result = subprocess.run(shlex.split(command), shell=True, capture_output=True, text=True)
+    command = 'if ls /dev/video* 1> /dev/null 2>&1;  \
+               then echo Device Found; \
+               else echo Device Not Found; fi'
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
 
-    if(result.stdout.strip() == 'Device Found'):
+    if (result.stdout.strip() == 'Device Found'):
         IsaacOwlNodeTest.skip_test = False
+
+        # restart the argus server
+        s = socket.socket(socket.AF_UNIX)
+        s.connect('/tmp/argus_restart_socket')
+        s.send(b'RESTART_SERVICE')
+        s.close()
+        time.sleep(1)
 
         correlated_timestamp_driver_node = ComposableNode(
             name='correlated_timestamp_driver_node',

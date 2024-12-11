@@ -21,12 +21,12 @@ SPDX-License-Identifier: Apache-2.0
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_data_recorder</name>
-  <version>3.1.0</version>
+  <version>3.2.0</version>
   <description>
     Package to record sensor data in Isaac ROS
   </description>
 
-  <maintainer email="ayusmans@nvidia.com">Ayusman Saha</maintainer>
+  <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
 
   <license>Copyright (c) 2023-2024, NVIDIA CORPORATION. All rights reserved.
     NVIDIA CORPORATION and its licensors retain all intellectual property
@@ -36,23 +36,21 @@ SPDX-License-Identifier: Apache-2.0
     license agreement from NVIDIA CORPORATION is strictly prohibited.</license>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <build_depend>isaac_ros_common</build_depend>
 
+  <depend>builtin_interfaces</depend>
+  <depend>isaac_ros_data_validation</depend>
+  <depend>isaac_ros_launch_utils</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>rclcpp_components</exec_depend>
 
-  <exec_depend>sllidar_ros2</exec_depend>
-
-  <exec_depend>nova_carter_description</exec_depend>
-  <exec_depend>nova_developer_kit_description</exec_depend>
   <exec_depend>isaac_ros_h264_encoder</exec_depend>
-  <exec_depend>isaac_ros_correlated_timestamp_driver</exec_depend>
-  <exec_depend>isaac_ros_hawk</exec_depend>
-  <exec_depend>isaac_ros_owl</exec_depend>
-  <exec_depend>isaac_ros_hesai</exec_depend>
-  <exec_depend>isaac_ros_imu_bmi088</exec_depend>
-  <exec_depend>isaac_ros_data_validation</exec_depend>
+  <exec_depend>isaac_ros_image_proc</exec_depend>
 
+  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>
     <build_type>ament_cmake</build_type>
