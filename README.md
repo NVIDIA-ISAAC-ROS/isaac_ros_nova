@@ -6,7 +6,7 @@ Optimized Isaac ROS packages for [Isaac Nova Orin](https://developer.nvidia.com/
 
 ## Overview
 
-[Isaac ROS Nova](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nova) provides a set of optimized packages and tools to interface with the Nova sensor suite.
+Isaac ROS Nova provides a set of optimized packages and tools to interface with the Nova sensor suite.
 These packages integrate with hardware timestamp synchronization on Jetson Orin platforms to enable high-quality sensor fusion.
 Sensor data streams through Isaac ROS graphs using [NITROS](https://nvidia-isaac-ros.github.io/concepts/nitros/index.html) for NVIDIA-accelerated processing.
 
@@ -29,7 +29,7 @@ This package is powered by [NVIDIA Isaac Transport for ROS (NITROS)](https://dev
 
 | Sample Graph<br/><br/>                                                                                                                                                                                                           | Input Size<br/><br/>      | Nova Carter<br/><br/>                                                                                                                                                                                     |
 |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [Data Recorder Live Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/benchmarks/isaac_ros_data_recorder_nova_benchmark/scripts/isaac_ros_data_recorder_4_hawk.py)<br/><br/><br/>4 Hawk Cameras<br/><br/> | 1200p<br/><br/><br/><br/> | [22.0 fps (per stream avg)](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_data_recorder_4_hawk-carter-v2.4-jp6.json)<br/><br/><br/>0 dropped frames (avg)<br/><br/> |
+| [Data Recorder Live Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/benchmarks/isaac_ros_data_recorder_nova_benchmark/scripts/isaac_ros_data_recorder_4_hawk.py)<br/><br/><br/>4 Hawk Cameras<br/><br/> | 1200p<br/><br/><br/><br/> | [22.4 fps (per stream avg)](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_data_recorder_4_hawk-carter-v2.4-jp6.json)<br/><br/><br/>0 dropped frames (avg)<br/><br/> |
 
 ---
 
