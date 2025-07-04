@@ -98,22 +98,12 @@ install(
 
 include(FetchContent)
 
-# Find NodeJS and Yarn
-find_program(NODEJS_EXECUTABLE node)
-if(NOT NODEJS_EXECUTABLE)
-  message(FATAL_ERROR "NodeJS not found. Please install NodeJS to build foxsight.")
-endif()
-
-find_program(YARN_EXECUTABLE yarn)
-if(NOT YARN_EXECUTABLE)
-  message(FATAL_ERROR "Yarn not found. Please install Yarn to build foxsight.")
-endif()
-
 # Fetch the foxsight project
 FetchContent_Declare(
   foxsight
   GIT_REPOSITORY https://github.com/nvidia-isaac/lichtblick
   GIT_TAG        main_internal
+  GIT_SHALLOW    TRUE
 )
 
 FetchContent_MakeAvailable(foxsight)
@@ -121,10 +111,34 @@ FetchContent_MakeAvailable(foxsight)
 # Define the path to the foxsight directory
 set(FOXSIGHT_DIR ${foxsight_SOURCE_DIR})
 
+# ---------------------------------------------------------------------------
+#  Yarn / NodeJS — use vendored Yarn 3.6.3 if present
+# ---------------------------------------------------------------------------
+
+# Find NodeJS and Yarn
+find_program(NODEJS_EXECUTABLE node)
+if(NOT NODEJS_EXECUTABLE)
+  message(FATAL_ERROR "NodeJS not found. Please install NodeJS to build foxsight.")
+endif()
+
+# Absolute path to the Yarn binary you committed in foxsight/main_internal
+set(FOXSIGHT_VENDORED_YARN
+    "${foxsight_SOURCE_DIR}/.yarn/releases/yarn-3.6.3.cjs")
+
+# Decide which command to invoke during the build
+if (EXISTS "${FOXSIGHT_VENDORED_YARN}")
+  # Use the vendored copy through "node <file>"
+  set(YARN_COMMAND ${NODEJS_EXECUTABLE} "${FOXSIGHT_VENDORED_YARN}")
+else()
+  # Fallback to a system-wide yarn (keeps previous behaviour)
+  find_program(YARN_EXECUTABLE yarn REQUIRED)
+  set(YARN_COMMAND ${YARN_EXECUTABLE})
+endif()
+
 # Add custom target to build foxsight
 add_custom_target(build_foxsight ALL
-  COMMAND ${YARN_EXECUTABLE} install
-  COMMAND ${YARN_EXECUTABLE} run web:build:prod >> foxsight_install.log 2>&1
+  COMMAND env YARN_CHECKSUM_BEHAVIOR=update PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 ${YARN_COMMAND} install
+  COMMAND ${YARN_COMMAND} run web:build:prod >> foxsight_install.log 2>&1
   WORKING_DIRECTORY ${FOXSIGHT_DIR}
   COMMENT "Building foxsight using FetchContent"
 )
